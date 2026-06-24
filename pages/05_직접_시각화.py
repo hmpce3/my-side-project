@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.figure_factory as ff
+from helpers import my_plot
 
 
 # ------------------------------------------------------------
@@ -257,7 +258,7 @@ chart_type = st.selectbox(
         "히스토그램",
         "KDE 플롯",
         "막대그래프",
-        "카운트 플롯",
+        "지도",
         "산점도",
         "회귀선 산점도",
         "선그래프",
@@ -268,6 +269,7 @@ chart_type = st.selectbox(
         "파이 차트",
         "도넛 차트",
         "누적 막대그래프",
+        "카운트 플롯"
     ],
 )
 
@@ -652,55 +654,112 @@ elif chart_type == "선그래프":
         st.warning("선그래프의 Y축에 사용할 숫자형 컬럼이 없습니다.")
 
     else:
+        st.write("시간 흐름이나 순서에 따른 숫자형 값의 변화를 확인합니다.")
+
         possible_x_columns = datetime_columns + categorical_columns + numeric_columns
 
         x_column = st.selectbox(
-            "X축 컬럼",
-            possible_x_columns,
+            "X축 컬럼을 선택하세요",
+            possible_x_columns
         )
 
         y_column = st.selectbox(
-            "Y축 숫자형 컬럼",
-            numeric_columns,
+            "Y축 숫자형 컬럼을 선택하세요",
+            numeric_columns
         )
 
         color_column = st.selectbox(
-            "선 색상 기준 컬럼",
-            ["선택 안 함"] + categorical_columns,
+            "선 색상으로 구분할 컬럼을 선택하세요",
+            ["선택 안 함"] + categorical_columns
         )
 
-        chart_data = filtered_data.sort_values(by=x_column)
-
         if color_column == "선택 안 함":
-            selected_color = choose_single_color(palette_colors[0], "line")
+            color_column = None
 
-            fig = px.line(
-                chart_data,
-                x=x_column,
-                y=y_column,
-                title=f"{x_column}별 {y_column} 변화",
-                color_discrete_sequence=[selected_color],
+        chart_data = filtered_data.copy()
+
+        # ----------------------------------------------------
+        # 날짜형 X축일 경우 날짜 단위와 집계 방식을 선택할 수 있게 합니다.
+        # ----------------------------------------------------
+        is_datetime_x = pd.api.types.is_datetime64_any_dtype(chart_data[x_column])
+
+        if is_datetime_x:
+            st.subheader("선그래프 집계 옵션")
+
+            date_unit = st.selectbox(
+                "날짜 단위를 선택하세요",
+                ["원본 그대로", "일별", "주별", "월별", "연도별"]
             )
 
-            fig.update_traces(line_color=selected_color)
+            aggregation_method = st.selectbox(
+                "집계 방식을 선택하세요",
+                ["평균", "합계", "최댓값", "최솟값"]
+            )
+
+            agg_map = {
+                "평균": "mean",
+                "합계": "sum",
+                "최댓값": "max",
+                "최솟값": "min"
+            }
+
+            # 원본 그대로가 아니면 날짜를 선택한 단위로 변환합니다.
+            if date_unit != "원본 그대로":
+                if date_unit == "일별":
+                    chart_data["날짜_단위"] = chart_data[x_column].dt.to_period("D").dt.to_timestamp()
+
+                elif date_unit == "주별":
+                    chart_data["날짜_단위"] = chart_data[x_column].dt.to_period("W").dt.start_time
+
+                elif date_unit == "월별":
+                    chart_data["날짜_단위"] = chart_data[x_column].dt.to_period("M").dt.to_timestamp()
+
+                elif date_unit == "연도별":
+                    chart_data["날짜_단위"] = chart_data[x_column].dt.to_period("Y").dt.to_timestamp()
+
+                group_columns = ["날짜_단위"]
+
+                if color_column is not None:
+                    group_columns.append(color_column)
+
+                chart_data = (
+                    chart_data
+                    .groupby(group_columns, as_index=False)[y_column]
+                    .agg(agg_map[aggregation_method])
+                )
+
+                x_column_for_chart = "날짜_단위"
+
+            else:
+                x_column_for_chart = x_column
+
+            chart_data = chart_data.sort_values(by=x_column_for_chart)
 
         else:
-            color_map = make_color_map(
-                chart_data,
-                color_column,
-                palette_colors,
-                "line",
+            st.info(
+                "X축이 날짜형이 아니므로 날짜 단위 집계 옵션은 적용하지 않습니다."
             )
 
-            fig = px.line(
-                chart_data,
-                x=x_column,
-                y=y_column,
-                color=color_column,
-                title=f"{x_column}별 {y_column} 변화",
-                color_discrete_sequence=palette_colors,
-                color_discrete_map=color_map,
-            )
+            x_column_for_chart = x_column
+            chart_data = chart_data.sort_values(by=x_column_for_chart)
+
+        default_colors = my_plot.get_color_palette(palette_name)
+
+        color_map = make_color_map(
+            chart_data,
+            color_column,
+            default_colors,
+            key_prefix="line"
+        )
+
+        fig = my_plot.make_line(
+            chart_data,
+            x_column_for_chart,
+            y_column,
+            color_column,
+            palette_name,
+            color_map
+        )
 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1087,6 +1146,92 @@ elif chart_type == "누적 막대그래프":
             title=f"{x_column}별 {y_column} {aggregation_method} 누적 막대그래프",
             color_discrete_sequence=palette_colors,
             color_discrete_map=color_map,
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+elif chart_type == "지도":
+    st.write("위도와 경도 컬럼을 이용해 지도 위에 데이터를 표시합니다.")
+
+    if len(numeric_columns) < 2:
+        st.warning("지도 시각화를 만들려면 위도와 경도에 해당하는 숫자형 컬럼이 필요합니다.")
+
+    else:
+        lat_column = st.selectbox(
+            "위도 컬럼을 선택하세요",
+            numeric_columns
+        )
+
+        lon_column = st.selectbox(
+            "경도 컬럼을 선택하세요",
+            numeric_columns
+        )
+
+        color_column = st.selectbox(
+            "색상으로 구분할 컬럼을 선택하세요",
+            ["선택 안 함"] + categorical_columns
+        )
+
+        if color_column == "선택 안 함":
+            color_column = None
+
+        size_column = st.selectbox(
+            "점 크기로 사용할 숫자형 컬럼을 선택하세요",
+            ["선택 안 함"] + numeric_columns
+        )
+
+        if size_column == "선택 안 함":
+            size_column = None
+
+        hover_column = st.selectbox(
+            "마우스오버에 표시할 컬럼을 선택하세요",
+            ["선택 안 함"] + data.columns.tolist()
+        )
+
+        if hover_column == "선택 안 함":
+            hover_column = None
+
+        map_data = filtered_data.dropna(
+            subset=[lat_column, lon_column]
+        )
+
+        st.subheader("지도 표시 옵션")
+
+        max_points = st.selectbox(
+            "지도에 표시할 최대 데이터 수를 선택하세요",
+            [500, 1000, 3000, 5000, "전체"],
+            index=1
+        )
+
+        map_data = filtered_data.dropna(
+            subset=[lat_column, lon_column]
+        )
+
+        original_map_count = len(map_data)
+
+        if max_points != "전체" and original_map_count > max_points:
+            map_data = map_data.sample(
+                n=max_points,
+                random_state=42
+            )
+
+            st.info(
+                f"지도 성능을 위해 전체 {original_map_count:,}개 중 "
+                f"{max_points:,}개를 랜덤으로 표시합니다."
+            )
+        else:
+            st.info(
+                f"지도에 {original_map_count:,}개 데이터를 표시합니다."
+            )
+
+        fig = my_plot.make_map(
+            map_data,
+            lat_column,
+            lon_column,
+            color_column,
+            size_column,
+            hover_column,
+            palette_name
         )
 
         st.plotly_chart(fig, use_container_width=True)

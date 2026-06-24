@@ -2,3 +2,9 @@ streamlit
 pandas
 plotly
 numpy
+matplotlib
+seaborn
+scipy
+statsmodels
+statannotations
+pingouin

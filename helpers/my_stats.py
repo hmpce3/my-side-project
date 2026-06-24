@@ -1,12 +1,15 @@
+import numpy as np
 from math import sqrt
 from pandas import DataFrame, melt, concat
 from scipy.stats import t
 from scipy.stats import normaltest, bartlett, levene
 from scipy.stats import ttest_1samp, wilcoxon, ttest_rel, ttest_ind, mannwhitneyu
+from pingouin import anova, welch_anova, pairwise_tukey, pairwise_gameshowell
 
 from statannotations.Annotator import Annotator
 
 from . import my_plot
+from . import my_prep
 
 def ci(data, column=None, clevel=0.95):
     """
@@ -64,8 +67,15 @@ def test_assumptions(data, columns=None, alpha=0.05, center='median'):
 
     # 각 변수에 대한 정규성 검정
     for c in columns:
-        s, p = normaltest(data[c])
-        normalize = p >=alpha
+        sample = data[c].dropna().astype("float")
+
+        if len(sample) < 8:
+            s = None
+            p = None
+            normalize = False
+        else:
+            s, p = normaltest(sample)
+            normalize = p >= alpha
 
         report.append({
                 'field':c,
@@ -80,7 +90,10 @@ def test_assumptions(data, columns=None, alpha=0.05, center='median'):
     # 변수가 두 개 이상인 경우 등분산성 검정
     if len(columns) >1:
         # 각 컬럼을 실수형으로 변환하여 리스트로 추출(Bartlett은 실수형 필요)
-        samples = [data[c].astype('float') for c in columns]
+        samples = [
+            data[c].dropna().astype("float")
+            for c in columns
+        ]
 
         if normal_dist: # 모든 변수가 정규성을 충족 -> Bartlett 검정
             name = "Bartlett"
@@ -364,3 +377,527 @@ def test_independent(data, group1, group2, alpha=0.05, plot=True, palette=None, 
         my_plot.show()
     
     return result_df
+
+# ==============================================
+# 일원 분산분석 함수 정의
+# ==============================================
+def anova_oneway(data, y, between, alpha=0.05):
+    """
+    일원분산분석(One-way ANOVA)
+
+    Args:
+        data (DataFrame): 검정 대상 데이터프레임(long 형식)
+        y (str) : 종속변수(연속형) 컬럼명
+        between (str): 집단을 구분하는 독립변수(명목형) 컬럼명
+        alpha (float): 유의수준 (기본값:0.05)
+
+    Returns:
+        DataFrame : pingouin의 분산분석 결과표(One-way ANOVA 또는 Welch-ANOVA)에 설명용 컬럼을 덧붙인 결과표
+            - test: 사용한 검정 이름
+            - effect_size : np2 기준 효과크기 해석 라벨(큼/중간/작음/미미함)
+    """
+
+    # 분석에 사용할 두 컬럼만 추출하고 결측 행 제거
+    df = data[[y, between]].dropna()
+
+    # 집단별 종속변수 값을 wide 형태(집단=컬럼)로 모아 가정 검정에 전달
+    wide = my_prep.long2wide(df, hue=between, values=y)
+    assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
+
+    # 등분산성 충족 여부 추출(정규성은 robust 가정에 따라 분기에 사용하지 않음)
+    equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
+
+    # 등분산성 여부에 따라 일반 ANOVA / Welch-ANOVA 선택
+    if equal_var:
+        anova_name = 'anova'
+        aov = anova(data=df, dv=y, between=between)
+    else:
+        anova_name = 'welch_anova'
+        aov =welch_anova(data=df, dv=y, between=between)
+
+    # 어떤 검정을 사용했는지 식별할 수 있도록 맨 앞에 test 컬럼 추가
+    aov.insert(0, 'test', anova_name)
+
+    # ---효과크기 해석 컬럼 추가 ---
+    # pingouin이 제공하는 Cohen의 효과크기 기준표로 해석하여 라벨 부여
+    # ≥ 0.14 -> 큼, ≥ 0.06 -> 중간 , ≥ 0.01 -> 작음, 그 미만 -> 미미함
+    conditions = [
+        aov['np2'] >=0.14,
+        aov['np2'] >=0.06,
+        aov['np2'] >=0.01
+    ]
+    labels = ["Large", "Medium", "Small"]
+    aov['effect_size'] = np.select(conditions, labels, default='Negligible')
+
+    return aov
+
+
+# ==============================================
+# 사후 검정 함수 정의
+# ==============================================
+def posthoc_oneway(data, y, between, alpha=0.05, plot=True, palette=None, 
+                   title=None, xlabel=None, ylabel=None, width=1280, height=640, save_path=None):
+    """
+    일원분산분석(One-way ANOVA)의 사후검정을 수행하는 함수
+
+    Args:
+        data (DataFrame): 검정 대상 데이터프레임(long 형식)
+        y (str) : 종속변수(연속형) 컬럼명
+        between (str): 집단을 구분하는 독립변수(명목형) 컬럼명
+        alpha (float): 유의수준 (기본값:0.05)
+        plot (bool): 결과를 시각화할지 여부 (기본값: True)
+        palette (str or list): 색상 팔레트
+        title (str): 그래프 제목
+        xlabel (str): x축 라벨
+        ylabel (str): y축 라벨
+        width (int): 그래프 가로 크기
+        height (int) : 그래프 세로 크기
+        save_path (str): 그래프 저장 경로
+
+    Returns:
+        DataFrame : 그룹 쌍별 사후 검정 결과표(Tukey HSD 또는 Games-Howell)
+    """
+
+    # 분석에 사용할 두 컬럼만 추출하고 결측 행 제거
+    df = data[[y, between]].dropna()
+
+    # 집단별 종속변수 값을 wide 형태(집단=컬럼)로 모아 가정 검정에 전달
+    wide = my_prep.long2wide(df, hue=between, values=y)
+    assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
+
+    # 등분산성 충족 여부 추출(정규성은 robust 가정에 따라 분기에 사용하지 않음)
+    equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
+
+    # 등분산성 여부에 따라 사후 검정 방법 선택
+    if equal_var:
+        posthoc_name = 'Tukey HSD'
+        result = pairwise_tukey(data=df, dv=y, between=between)
+        # pingouin 버전/패치에 따라 p값 컬럼명이 다를 수 있어 유연하게 선택
+        pcol = "p-tukey" if "p-tukey" in result.columns else "p_tukey"
+    else:
+        posthoc_name = 'Games-Howell'
+        result = pairwise_gameshowell(data=df, dv=y, between=between)
+        pcol='pval'
+
+    # 그래프 x축 순서(그룹 순서)
+    order = sorted(df[between].unique())
+
+    # 비교 대상 그룹 쌍과 그에 대응하는 p값 추출
+    pairs = list(zip(result['A'], result['B']))
+    pvalues = list(result[pcol])
+
+    # 어떤 사후 검정을 사용했는지 식별할 수 있도록 맨 앞에 test 컬럼 추가
+    result.insert(0,'test', posthoc_name)
+    # p값이 유의수준 미만이면 통계적으로 유의(귀무가설 기각)
+    result['significant'] = result[pcol] < alpha
+
+    # --- 효과크기 해석 컬럼 추가 ---
+    # hedges(Hedges' g)는 두 집단 평균차에 대한 표준화 효과크기로,
+    # Cohen의 d 기준표를 따라 절댓값으로 해석한다.
+    #   ≥ 0.8 → 큼, ≥ 0.5 → 중간, ≥ 0.2 → 작음, 그 미만 → 미미함
+    # 부호는 비교 방향(A-B)을 의미하므로 크기 해석에는 절댓값을 사용한다.
+    abs_hedges = result["hedges"].abs()
+    conditions = [
+        abs_hedges >= 0.8,
+        abs_hedges >= 0.5,
+        abs_hedges >= 0.2,
+    ]
+    labels = ["Large", "Medium", "Small"]
+    result["effect_size"] = np.select(conditions, labels, default="Negligible")
+
+    # 시각화 옵션이 True인 경우, 시각화 수행
+    if plot:
+        fig, ax= my_plot.init(title=title, width=width, height=height, xlabel=xlabel, ylabel=ylabel)
+        my_plot.boxplot(data=df, x=between, y=y, hue=between, palette=palette, ax=ax)
+
+        # 독립표본 t검정 결과를 시각화에 추가
+        annotator = Annotator(data=df, x=between, y=y,
+                            pairs=pairs, order=order,
+                            ax=ax)                      # 그래프 축
+        
+        # 검정을 새로 수행하지 않고, 앞서 구한 p값을 그대로 주입하여 주석 표시
+        annotator.configure(text_format='star', loc='inside')
+        annotator.set_pvalues(pvalues)
+        annotator.annotate()
+        my_plot.show()
+
+    return result
+
+
+# ==========================================================
+# Streamlit 앱용 통계 검정 보조 함수
+# ==========================================================
+
+def interpret_p_value(p_value, alpha=0.05):
+    """
+    p-value를 기준으로 귀무가설 기각 여부를 판단합니다.
+    """
+
+    if p_value < alpha:
+        return "귀무가설 기각"
+    else:
+        return "귀무가설 채택"
+
+
+def normality_test_for_app(data, columns=None, alpha=0.05):
+    """
+    선택한 숫자형 변수들에 대해 정규성 검정을 수행합니다.
+
+    사용 검정:
+    - scipy.stats.normaltest
+
+    귀무가설 H0:
+    - 해당 변수는 정규분포를 따른다.
+
+    대립가설 H1:
+    - 해당 변수는 정규분포를 따르지 않는다.
+    """
+
+    if columns is None:
+        columns = data.select_dtypes(include="number").columns.tolist()
+
+    if isinstance(columns, str):
+        columns = [columns]
+
+    result_rows = []
+
+    for column in columns:
+        sample = data[column].dropna()
+
+        if len(sample) < 8:
+            result_rows.append({
+                "변수": column,
+                "검정": "normaltest",
+                "귀무가설(H0)": "정규분포를 따른다",
+                "대립가설(H1)": "정규분포를 따르지 않는다",
+                "표본수": len(sample),
+                "통계량": None,
+                "p-value": None,
+                "판정": "검정 불가",
+                "해석": "normaltest는 표본 수가 너무 적으면 적절하지 않습니다."
+            })
+            continue
+
+        statistic, p_value = normaltest(sample)
+
+        decision = interpret_p_value(p_value, alpha)
+
+        result_rows.append({
+            "변수": column,
+            "검정": "normaltest",
+            "귀무가설(H0)": "정규분포를 따른다",
+            "대립가설(H1)": "정규분포를 따르지 않는다",
+            "표본수": len(sample),
+            "통계량": round(float(statistic), 4),
+            "p-value": round(float(p_value), 4),
+            "판정": decision,
+            "해석": "정규성 만족" if p_value >= alpha else "정규성 불만족"
+        })
+
+    return DataFrame(result_rows)
+
+
+def equal_variance_test_for_app(data, columns, alpha=0.05, center="median"):
+    """
+    두 개 이상의 숫자형 변수에 대해 등분산성 검정을 수행합니다.
+
+    먼저 각 변수의 정규성을 확인합니다.
+
+    검정 선택 로직:
+    - 모든 변수가 정규성 만족 → Bartlett 검정
+    - 하나라도 정규성 불만족 → Levene 검정
+
+    귀무가설 H0:
+    - 각 변수의 분산은 같다.
+
+    대립가설 H1:
+    - 적어도 하나의 변수는 분산이 다르다.
+    """
+
+    if isinstance(columns, str):
+        columns = [columns]
+
+    if len(columns) < 2:
+        return DataFrame([{
+            "검정": "등분산성 검정",
+            "귀무가설(H0)": "각 변수의 분산은 같다",
+            "대립가설(H1)": "적어도 하나의 변수는 분산이 다르다",
+            "통계량": None,
+            "p-value": None,
+            "판정": "검정 불가",
+            "해석": "등분산성 검정은 변수가 2개 이상일 때만 수행합니다."
+        }])
+
+    normality_result = normality_test_for_app(
+        data,
+        columns=columns,
+        alpha=alpha
+    )
+
+    normality_available = normality_result["p-value"].notna().all()
+
+    all_normal = (
+        normality_available
+        and (normality_result["판정"] == "귀무가설 채택").all()
+    )
+
+    samples = [
+        data[column].dropna().astype(float)
+        for column in columns
+    ]
+
+    if all_normal:
+        test_name = "Bartlett"
+        statistic, p_value = bartlett(*samples)
+    else:
+        test_name = "Levene"
+        statistic, p_value = levene(*samples, center=center)
+
+    decision = interpret_p_value(p_value, alpha)
+
+    result = DataFrame([{
+        "검정": test_name,
+        "귀무가설(H0)": "각 변수의 분산은 같다",
+        "대립가설(H1)": "적어도 하나의 변수는 분산이 다르다",
+        "통계량": round(float(statistic), 4),
+        "p-value": round(float(p_value), 4),
+        "판정": decision,
+        "해석": "등분산성 만족" if p_value >= alpha else "등분산성 불만족"
+    }])
+
+    return result
+
+
+def assumption_test_for_app(data, columns=None, alpha=0.05):
+    """
+    통계 분석 전에 필요한 가정 검정을 한 번에 수행합니다.
+
+    수행 로직:
+    1. 각 변수별 정규성 검정 수행
+    2. 변수가 2개 이상이면 등분산성 검정 수행
+    3. 변수가 1개이면 정규성 결과만 반환
+
+    반환:
+    - normality_result: 정규성 검정 결과
+    - variance_result: 등분산성 검정 결과 또는 None
+    """
+
+    if columns is None:
+        columns = data.select_dtypes(include="number").columns.tolist()
+
+    if isinstance(columns, str):
+        columns = [columns]
+
+    normality_result = normality_test_for_app(
+        data,
+        columns=columns,
+        alpha=alpha
+    )
+
+    if len(columns) >= 2:
+        variance_result = equal_variance_test_for_app(
+            data,
+            columns=columns,
+            alpha=alpha
+        )
+    else:
+        variance_result = None
+
+    return normality_result, variance_result
+
+def format_p_value(p_value):
+    if p_value < 0.0001:
+        return "< 0.0001"
+    return round(float(p_value), 4)
+
+#================
+def group_mean_test_for_app(data, group_column, value_column, alpha=0.05):
+    """
+    범주형 집단 컬럼과 숫자형 값 컬럼을 이용해 그룹 간 평균 차이를 검정합니다.
+
+    입력 데이터 형태:
+    - long 형태
+    - 예: 구분 | 값
+
+    로직:
+    1. 집단 수가 2개이면 독립표본 검정 수행
+    2. 집단 수가 3개 이상이면 ANOVA 수행
+    """
+
+    df = data[[group_column, value_column]].dropna().copy()
+
+    groups = df[group_column].dropna().unique().tolist()
+
+    if len(groups) < 2:
+        return {
+            "test_type": "검정 불가",
+            "message": "집단이 2개 이상이어야 평균 차이 검정을 수행할 수 있습니다.",
+            "group_count": DataFrame(),
+            "assumption_result": DataFrame(),
+            "test_result": DataFrame(),
+            "posthoc_result": None
+        }
+
+    group_count = (
+        df[group_column]
+        .value_counts()
+        .reset_index()
+    )
+
+    group_count.columns = [group_column, "표본 수"]
+
+    # ------------------------------------------------------
+    # 집단이 2개인 경우: 독립표본 검정
+    # ------------------------------------------------------
+    if len(groups) == 2:
+        group1 = groups[0]
+        group2 = groups[1]
+
+        wide_data = DataFrame({
+            str(group1): df.loc[df[group_column] == group1, value_column].reset_index(drop=True),
+            str(group2): df.loc[df[group_column] == group2, value_column].reset_index(drop=True)
+        })
+
+        assumption_result = test_assumptions(
+            wide_data,
+            columns=[str(group1), str(group2)],
+            alpha=alpha
+        )
+
+        test_result = test_independent(
+            wide_data,
+            group1=str(group1),
+            group2=str(group2),
+            alpha=alpha,
+            plot=False
+        )
+
+        return {
+            "test_type": "두 집단 평균 차이 검정",
+            "message": "집단이 2개이므로 독립표본 검정을 수행했습니다.",
+            "group_count": group_count,
+            "assumption_result": assumption_result.reset_index(),
+            "test_result": test_result.reset_index(),
+            "posthoc_result": None
+        }
+
+    # ------------------------------------------------------
+    # 집단이 3개 이상인 경우: ANOVA
+    # ------------------------------------------------------
+    else:
+        assumption_wide = my_prep.long2wide(
+            df,
+            hue=group_column,
+            values=value_column
+        )
+
+        assumption_result = test_assumptions(
+            assumption_wide,
+            columns=list(assumption_wide.columns),
+            alpha=alpha
+        )
+
+        test_result = anova_oneway(
+            df,
+            y=value_column,
+            between=group_column,
+            alpha=alpha
+        )
+
+        # pingouin 결과에서 p-value 컬럼 찾기
+        if "p-unc" in test_result.columns:
+            p_value = test_result["p-unc"].iloc[0]
+        elif "pval" in test_result.columns:
+            p_value = test_result["pval"].iloc[0]
+        else:
+            p_value = None
+
+        if p_value is not None and p_value < alpha:
+            posthoc_result = posthoc_oneway(
+                df,
+                y=value_column,
+                between=group_column,
+                alpha=alpha,
+                plot=False
+            )
+        else:
+            posthoc_result = None
+
+        return {
+            "test_type": "세 집단 이상 평균 차이 검정",
+            "message": "집단이 3개 이상이므로 ANOVA 계열 검정을 수행했습니다.",
+            "group_count": group_count,
+            "assumption_result": assumption_result.reset_index(),
+            "test_result": test_result,
+            "posthoc_result": posthoc_result
+        }
+    
+def format_p_value_for_app(p_value):
+    if p_value is None:
+        return None
+
+    try:
+        p_value = float(p_value)
+    except Exception:
+        return p_value
+
+    return f"{p_value:.3f}"
+
+def format_stat_result_for_app(result):
+    """
+    통계 결과표를 Streamlit 화면에 보기 좋게 정리합니다.
+    """
+
+    if result is None:
+        return None
+
+    formatted = result.copy()
+
+    p_value_columns = [
+        column for column in formatted.columns
+        if "p" in str(column).lower()
+    ]
+
+    for column in p_value_columns:
+        formatted[column] = formatted[column].apply(format_p_value_for_app)
+
+    bool_columns = formatted.select_dtypes(include="bool").columns
+
+    for column in bool_columns:
+        formatted[column] = formatted[column].map({
+            True: "만족",
+            False: "불만족"
+        })
+
+    numeric_columns = formatted.select_dtypes(include="number").columns
+
+    for column in numeric_columns:
+        formatted[column] = formatted[column].round(4)
+
+    return formatted
+
+def make_test_interpretation(test_name, p_value, alpha=0.05):
+    """
+    통계 검정 결과를 사용자가 이해하기 쉬운 문장으로 바꿔주는 함수입니다.
+    """
+
+    try:
+        p_value = float(p_value)
+    except Exception:
+        return "p-value를 숫자로 변환할 수 없어 결과를 해석할 수 없습니다."
+
+    if p_value < alpha:
+        return (
+            f"{test_name} 결과, p-value는 {p_value:.3f}로 "
+            f"유의수준 {alpha}보다 작습니다. "
+            "따라서 귀무가설(H0)을 기각합니다. "
+            "즉, 통계적으로 유의한 차이가 있다고 해석할 수 있습니다."
+        )
+
+    else:
+        return (
+            f"{test_name} 결과, p-value는 {p_value:.3f}로 "
+            f"유의수준 {alpha}보다 크거나 같습니다. "
+            "따라서 귀무가설(H0)을 기각할 수 없습니다. "
+            "즉, 통계적으로 유의한 차이가 있다고 보기 어렵습니다."
+        )

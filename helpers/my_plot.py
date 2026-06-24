@@ -245,7 +245,7 @@ def histplot(data=None, x=None, bins='auto', hue=None,
         show(save_path=save_path)
 
 #----------------------------------------------------------
-def boxplot(data=None, x=None, y=None, hue=None, orient=None, palette=None,
+def boxplot(data=None, x=None, y=None, hue=None, orient=None,   palette=None, order=None, 
              title=None, xlabel=None, ylabel=None,
              width=1280, height=640, save_path=None, ax=None):
     """
@@ -258,6 +258,7 @@ def boxplot(data=None, x=None, y=None, hue=None, orient=None, palette=None,
         hue: 범주 구분 컬럼명
         orient: 상자그림 방향 (None, 'v' 또는 'h')
         palette: 색상 팔레트 이름
+        order : 상자그림 순서를 의미하는 연속형 자료형
         title: 그래프 제목
         xlabel: x축 레이블
         ylabel: y축 레이블
@@ -270,9 +271,9 @@ def boxplot(data=None, x=None, y=None, hue=None, orient=None, palette=None,
     if ax is None:
         fig, ax = init(width=width, height=height, title=title, xlabel=xlabel, ylabel=ylabel)
 
-    # 히스토그램 그리기
+    # 상자그림 그리기
     sb.boxplot(data=data, x=x, y=y, hue=hue, orient=orient,
-                palette=palette, ax=ax)
+                palette=palette, order=order, ax=ax)
     
     # 그래프 표시
     if fig is not None:
@@ -1434,6 +1435,49 @@ def make_stacked_bar(
         title=f"{x_column}별 {y_column} {aggregation_method} 누적 막대그래프",
         color_discrete_sequence=get_color_palette(palette_name),
         color_discrete_map=color_map or {},
+    )
+
+    return fig
+
+#===============
+#지도
+#===============
+def make_map(data, lat_column, lon_column, color_column=None, size_column=None, hover_column=None, palette_name="Set2"):
+    """
+    위도/경도 컬럼을 이용해 지도 위에 점을 표시하는 함수입니다.
+    """
+
+    color_palette = get_color_palette(palette_name)
+
+    fig = px.scatter_map(
+        data,
+        lat=lat_column,
+        lon=lon_column,
+        color=color_column,
+        size=size_column,
+        hover_name=hover_column,
+        color_discrete_sequence=color_palette,
+        zoom=11,
+        height=700,
+        title="지도 시각화"
+    )
+
+    if size_column is None:
+        fig.update_traces(
+            marker=dict(
+                size=10,
+                opacity=0.85
+            )
+        )
+    else:
+        fig.update_traces(
+            marker=dict(
+                opacity=0.75
+            )
+        )
+
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=40, b=0)
     )
 
     return fig

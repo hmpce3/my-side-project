@@ -44,6 +44,9 @@ if "data" not in st.session_state:
 original_data = st.session_state["data"]
 cleaned_data = original_data.copy()
 
+if "is_cleaned" not in st.session_state:
+    st.session_state["is_cleaned"] = False
+
 
 # ------------------------------------------------------------
 # 3. 정제 적용 여부 기록
@@ -79,6 +82,72 @@ with status_col3:
 
 st.dataframe(original_data.head(), use_container_width=True)
 
+# ------------------------------------------------------------
+# 4-1. 추천 정제 가이드
+# ------------------------------------------------------------
+# 설명이 너무 길면 화면이 복잡해지므로,
+# 기본 안내는 짧게 보여주고 자세한 설명은 expander 안에 넣습니다.
+# ------------------------------------------------------------
+st.subheader("추천 정제 가이드")
+
+numeric_columns_for_guide = original_data.select_dtypes(
+    include="number"
+).columns.tolist()
+
+date_name_candidates = [
+    column for column in original_data.columns
+    if any(
+        keyword in str(column).lower()
+        for keyword in [
+            "날짜",
+            "일자",
+            "년월",
+            "월일",
+            "기준일",
+            "등록일",
+            "수정일",
+            "date",
+            "time",
+            "created",
+            "updated"
+        ]
+    )
+]
+
+has_many_numeric_columns = len(numeric_columns_for_guide) >= 2
+has_possible_date_column = len(date_name_candidates) >= 1
+
+if has_many_numeric_columns:
+    st.info(
+        "숫자형 컬럼이 여러 개 있습니다. "
+        "비슷한 의미의 컬럼이라면 `여러 컬럼을 하나로 합치기 (wide → long)` 작업을 고려해볼 수 있습니다."
+    )
+
+    if has_possible_date_column:
+        st.success(
+            "날짜로 보이는 컬럼도 있습니다. "
+            "날짜형으로 변경하면 시간 흐름 시각화에 활용할 수 있습니다."
+        )
+
+        with st.expander("시계열 데이터 정제 순서 보기"):
+            st.write("""
+            시계열 데이터라면 다음 순서를 추천합니다.
+
+            1. `데이터 타입 변경`에서 날짜 컬럼을 `날짜형`으로 변경합니다.
+            2. `여러 컬럼을 하나로 합치기 (wide → long)` 작업을 선택합니다.
+            3. 기준 컬럼에는 날짜 컬럼을 선택합니다.
+            4. 하나로 합칠 값 컬럼에는 비교하고 싶은 숫자 컬럼들을 선택합니다.
+            5. 새 구분 컬럼 이름은 `구분`, `키워드`, `지역`, `항목`처럼 입력합니다.
+            6. 새 값 컬럼 이름은 `값`, `점수`, `매출`, `검색지수`처럼 입력합니다.
+            7. 정제 결과를 확인한 뒤 `정제 데이터를 앱에 저장`합니다.
+            """)
+
+else:
+    st.info(
+        "여러 컬럼을 하나로 합칠 만한 숫자형 컬럼이 많지 않습니다. "
+        "필요한 정제 작업을 선택해서 진행하세요."
+    )
+
 
 # ------------------------------------------------------------
 # 5. 정제 작업 선택
@@ -96,7 +165,7 @@ cleaning_options = st.multiselect(
         "결측치 채우기",
         "컬럼 삭제",
         "데이터 타입 변경",
-        "가로형 데이터를 세로형으로 변환",
+        "여러 컬럼을 하나로 합치기 (wide → long)",
     ],
 )
 
@@ -294,125 +363,189 @@ if "컬럼 삭제" in cleaning_options:
 
 
 # ------------------------------------------------------------
-# 10. 데이터 타입 변경
+# 9. 데이터 타입 변경
 # ------------------------------------------------------------
-# CSV 파일을 읽으면 숫자나 날짜처럼 보이는 값도 문자형으로 들어올 수 있습니다.
-# 여기서는 선택한 컬럼들을 원하는 타입으로 변환합니다.
+# CSV를 읽으면 숫자처럼 보이는 값이 문자로 들어오거나,
+# 날짜처럼 보이는 값이 문자로 들어오는 경우가 많습니다.
 #
-# 문자형:
-# - 문자열로 변환합니다.
+# 이 기능은 사용자가 변경할 컬럼만 먼저 선택한 뒤,
+# 선택한 컬럼마다 서로 다른 타입을 지정할 수 있게 합니다.
 #
-# 숫자형:
-# - 숫자로 변환할 수 없는 값은 결측치로 처리합니다.
+# 예:
+# 날짜 → 날짜형
+# 구분 → 카테고리형
+# 값 → 숫자형
 #
-# 날짜형:
-# - 날짜로 변환할 수 없는 값은 결측치로 처리합니다.
-#
-# 카테고리형:
-# - 반복되는 범주값을 다룰 때 사용합니다.
+# 이렇게 컬럼마다 다른 타입을 한 번에 적용할 수 있습니다.
 # ------------------------------------------------------------
 if "데이터 타입 변경" in cleaning_options:
     st.subheader("데이터 타입 변경")
 
-    type_columns = st.multiselect(
-        "타입을 변경할 컬럼",
-        cleaned_data.columns.tolist(),
-        key="type_columns",
+    st.write("""
+    타입을 변경할 컬럼을 먼저 선택한 뒤, 각 컬럼별로 원하는 데이터 타입을 지정합니다.
+    변경하지 않을 컬럼은 선택하지 않으면 됩니다.
+    """)
+
+    target_columns = st.multiselect(
+        "타입을 변경할 컬럼을 선택하세요",
+        cleaned_data.columns.tolist()
     )
 
-    new_type = st.selectbox(
-        "변경할 데이터 타입",
-        ["문자형", "숫자형", "날짜형", "카테고리형"],
-        key="new_type",
-    )
+    type_options = [
+        "문자형",
+        "숫자형",
+        "날짜형",
+        "카테고리형"
+    ]
 
-    if not type_columns:
-        st.info("타입을 변경할 컬럼을 선택해주세요.")
+    selected_type_map = {}
+
+    if target_columns:
+        st.write("컬럼별 변경할 타입을 선택하세요.")
+
+        # 선택한 컬럼들을 한 줄에 2개씩 보여주기 위해 columns를 사용합니다.
+        columns_per_row = 2
+
+        for start_index in range(0, len(target_columns), columns_per_row):
+            row_columns = target_columns[start_index:start_index + columns_per_row]
+
+            layout_columns = st.columns(len(row_columns))
+
+            for column_index, column in enumerate(row_columns):
+                with layout_columns[column_index]:
+                    current_type = str(cleaned_data[column].dtype)
+
+                    selected_type = st.selectbox(
+                        f"{column} 현재 타입: {current_type}",
+                        type_options,
+                        key=f"type_change_{column}"
+                    )
+
+                    selected_type_map[column] = selected_type
 
     else:
-        preview_type_data = pd.DataFrame({
-            "컬럼명": type_columns,
-            "현재 타입": [str(cleaned_data[column].dtype) for column in type_columns],
-            "변경 타입": [new_type] * len(type_columns),
-        })
+        st.info("타입을 변경할 컬럼을 선택해주세요.")
 
-        st.dataframe(preview_type_data, use_container_width=True)
+    if st.checkbox("선택한 컬럼의 타입 변경을 적용합니다"):
+        if not target_columns:
+            st.warning("먼저 타입을 변경할 컬럼을 선택해야 합니다.")
+            st.stop()
 
-        apply_type_change = st.checkbox(
-            "데이터 타입 변경 적용",
-            key="apply_type_change",
-        )
+        success_columns = []
+        failed_columns = []
 
-        if apply_type_change:
-            success_columns = []
-            failed_columns = []
+        for column, selected_type in selected_type_map.items():
+            try:
+                if selected_type == "문자형":
+                    cleaned_data[column] = cleaned_data[column].astype(str)
 
-            for type_column in type_columns:
-                try:
-                    if new_type == "문자형":
-                        cleaned_data[type_column] = cleaned_data[type_column].astype(str)
+                elif selected_type == "숫자형":
+                    cleaned_data[column] = pd.to_numeric(
+                        cleaned_data[column],
+                        errors="coerce"
+                    )
 
-                    elif new_type == "숫자형":
-                        cleaned_data[type_column] = pd.to_numeric(
-                            cleaned_data[type_column],
-                            errors="coerce",
-                        )
+                elif selected_type == "날짜형":
+                    cleaned_data[column] = pd.to_datetime(
+                        cleaned_data[column],
+                        errors="coerce"
+                    )
 
-                    elif new_type == "날짜형":
-                        cleaned_data[type_column] = pd.to_datetime(
-                            cleaned_data[type_column],
-                            errors="coerce",
-                        )
+                elif selected_type == "카테고리형":
+                    cleaned_data[column] = cleaned_data[column].astype("category")
 
-                    elif new_type == "카테고리형":
-                        cleaned_data[type_column] = cleaned_data[type_column].astype("category")
+                success_columns.append({
+                    "컬럼명": column,
+                    "변경 타입": selected_type
+                })
 
-                    success_columns.append(type_column)
+            except Exception as error:
+                failed_columns.append({
+                    "컬럼명": column,
+                    "변경 타입": selected_type,
+                    "오류 내용": str(error)
+                })
 
-                except Exception as error:
-                    failed_columns.append({
-                        "컬럼명": type_column,
-                        "오류 내용": str(error),
-                    })
+        if success_columns:
+            st.success(f"{len(success_columns)}개 컬럼의 타입을 변경했습니다.")
+            st.dataframe(
+                pd.DataFrame(success_columns),
+                use_container_width=True
+            )
 
-            if success_columns:
-                cleaning_applied = True
-                applied_steps.append("데이터 타입 변경")
+            cleaning_applied = True
+            applied_steps.append("데이터 타입 변경")
 
-                st.success(
-                    f"{len(success_columns)}개 컬럼을 {new_type}으로 변경했습니다."
-                )
-
-            if failed_columns:
-                st.error("일부 컬럼은 타입 변경에 실패했습니다.")
-                st.dataframe(
-                    pd.DataFrame(failed_columns),
-                    use_container_width=True,
-                )
-
+        if failed_columns:
+            st.error("일부 컬럼은 타입 변경에 실패했습니다.")
+            st.dataframe(
+                pd.DataFrame(failed_columns),
+                use_container_width=True
+            )
 
 # ------------------------------------------------------------
-# 11. 가로형 데이터를 세로형으로 변환
+# 11. 여러 컬럼을 하나로 합치기 (wide → long)
 # ------------------------------------------------------------
 # 이 작업은 pandas의 melt()를 사용합니다.
 #
-# 예:
-# 변환 전: 상품명 | 1월매출 | 2월매출 | 3월매출
-# 변환 후: 상품명 | 월 | 매출
+# 비슷한 의미를 가진 여러 컬럼을 하나의 "구분" 컬럼과 "값" 컬럼으로 정리합니다.
 #
-# 이렇게 바꾸면 선그래프, 막대그래프, 박스플롯 등에서
-# 범주별 비교와 시간 흐름 분석을 더 쉽게 할 수 있습니다.
+# 예:
+# 국어, 영어, 수학 → 과목 / 점수
+# 만족도, 가격, 디자인 → 평가항목 / 점수
+# 서울, 부산, 대구 → 지역 / 값
 # ------------------------------------------------------------
-if "가로형 데이터를 세로형으로 변환" in cleaning_options:
-    st.subheader("가로형 데이터를 세로형으로 변환")
+if "여러 컬럼을 하나로 합치기 (wide → long)" in cleaning_options:
+    st.subheader("여러 컬럼을 하나로 합치기 (wide → long)")
 
     st.caption(
-        "월별 매출처럼 여러 컬럼에 나뉜 값을 하나의 구분 컬럼과 값 컬럼으로 정리합니다."
+        "비슷한 의미를 가진 여러 컬럼을 하나의 구분 컬럼과 값 컬럼으로 정리합니다."
     )
 
-    with st.expander("예시 보기"):
-        st.write("변환 전: 상품명 | 1월매출 | 2월매출 | 3월매출")
-        st.write("변환 후: 상품명 | 월 | 매출")
+    with st.expander("이 기능이 필요한 경우 보기"):
+        st.write("""
+        여러 컬럼을 하나로 합치기(wide → long)는  
+        비슷한 의미를 가진 여러 컬럼을 하나의 `구분` 컬럼과 `값` 컬럼으로 바꾸는 작업입니다.
+        """)
+
+        st.write("""
+        예를 들어 다음과 같은 경우에 사용할 수 있습니다.
+
+        - `국어`, `영어`, `수학` → `과목`, `점수`
+        - `서울`, `부산`, `대구` → `지역`, `값`
+        - `만족도`, `가격`, `디자인` → `평가항목`, `점수`
+        - `모델A`, `모델B`, `모델C` → `모델`, `점수`
+        - `개성주악`, `탕후루`, `말차` → `키워드`, `검색지수`
+        """)
+
+        st.warning(
+            "단, 서로 단위가 완전히 다른 컬럼을 무작정 합치면 해석이 어려울 수 있습니다. "
+            "예: 나이, 키, 소득"
+        )
+
+    with st.expander("변환 예시 보기"):
+        example_before = pd.DataFrame({
+            "응답자ID": [1, 2],
+            "만족도": [5, 4],
+            "가격": [3, 2],
+            "디자인": [4, 5]
+        })
+
+        example_after = pd.DataFrame({
+            "응답자ID": [1, 1, 1, 2, 2, 2],
+            "평가항목": ["만족도", "가격", "디자인", "만족도", "가격", "디자인"],
+            "점수": [5, 3, 4, 4, 2, 5]
+        })
+
+        before_col, after_col = st.columns(2)
+
+        with before_col:
+            st.caption("변환 전")
+            st.dataframe(example_before, use_container_width=True)
+
+        with after_col:
+            st.caption("변환 후")
+            st.dataframe(example_after, use_container_width=True)
 
     column_names = cleaned_data.columns.tolist()
 
@@ -427,7 +560,7 @@ if "가로형 데이터를 세로형으로 변환" in cleaning_options:
         "그대로 둘 기준 컬럼",
         column_names,
         default=suggested_id_columns[:2],
-        help="예: 상품명, 날짜, 지역, 응답자ID",
+        help="예: 날짜, 응답자ID, 학생ID, 상품명, 매장명",
         key="melt_id_columns",
     )
 
@@ -444,7 +577,7 @@ if "가로형 데이터를 세로형으로 변환" in cleaning_options:
         "하나로 합칠 값 컬럼",
         value_column_candidates,
         default=numeric_candidates,
-        help="예: 1월매출, 2월매출, 3월매출",
+        help="예: 국어/영어/수학, 만족도/가격/디자인, 서울/부산/대구",
         key="melt_value_columns",
     )
 
@@ -454,7 +587,7 @@ if "가로형 데이터를 세로형으로 변환" in cleaning_options:
         var_name = st.text_input(
             "새 구분 컬럼 이름",
             value="구분",
-            help="예: 월, 지역, 평가항목, 키워드",
+            help="예: 과목, 평가항목, 지역, 모델, 키워드",
             key="melt_var_name",
         )
 
@@ -462,7 +595,7 @@ if "가로형 데이터를 세로형으로 변환" in cleaning_options:
         value_name = st.text_input(
             "새 값 컬럼 이름",
             value="값",
-            help="예: 매출, 인구, 점수, 검색지수",
+            help="예: 점수, 매출, 인구, 검색지수, 비율",
             key="melt_value_name",
         )
 
@@ -495,17 +628,17 @@ if "가로형 데이터를 세로형으로 변환" in cleaning_options:
             st.dataframe(preview_data.head(), use_container_width=True)
 
         apply_melt = st.checkbox(
-            "세로형 데이터로 변환 적용",
+            "여러 컬럼을 하나로 합치기 적용",
             key="apply_melt",
         )
 
         if apply_melt:
             cleaned_data = preview_data
             cleaning_applied = True
-            applied_steps.append("가로형 데이터를 세로형으로 변환")
+            applied_steps.append("여러 컬럼을 하나로 합치기 (wide → long)")
 
             st.success(
-                f"세로형 데이터로 변환했습니다. "
+                f"여러 컬럼을 하나로 합쳤습니다. "
                 f"현재 데이터는 {cleaned_data.shape[0]:,}행, "
                 f"{cleaned_data.shape[1]:,}열입니다."
             )

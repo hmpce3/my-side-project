@@ -9,11 +9,11 @@ importlib.reload(my_data)
 
 st.title("데이터 업로드 / 결합")
 
-st.write("CSV 파일을 업로드하면 데이터를 불러오고, 여러 파일을 결합할 수 있습니다.")
+st.write("파일을 업로드하면 데이터를 불러오고, 여러 파일을 결합할 수 있습니다.")
 
 uploaded_files = st.file_uploader(
-    "CSV 파일을 선택하세요",
-    type=["csv"],
+    "데이터 파일을 선택하세요",
+    type=["csv", "xlsx", "xls", "json"],
     accept_multiple_files=True
 )
 
@@ -24,7 +24,9 @@ if uploaded_files:
 
     for uploaded_file in uploaded_files:
         try:
-            file_data, detected_encoding = my_data.read_csv_auto(uploaded_file)
+            file_data, file_info = my_data.read_data_file(uploaded_file)
+            if len(uploaded_files) > 1:
+                file_data["__source_file__"] = uploaded_file.name
 
         except Exception as error:
             st.error(
@@ -42,7 +44,7 @@ if uploaded_files:
 
         file_information.append({
             "파일명": uploaded_file.name,
-            "인코딩": detected_encoding,
+            "인코딩": file_info,
             "행 개수": file_data.shape[0],
             "열 개수": file_data.shape[1],
             "컬럼": ", ".join(file_data.columns)
@@ -209,7 +211,32 @@ if uploaded_files:
     st.subheader("데이터 미리보기")
     st.dataframe(data.head())
 
+    sample_data = my_data.make_sample_data(
+        data,
+        sample_size=5000
+    )
+
+    if "__source_file__" in sample_data.columns:
+        st.subheader("샘플 데이터 파일별 구성")
+
+        sample_source_summary = (
+            sample_data["__source_file__"]
+            .value_counts()
+            .reset_index()
+        )
+
+        sample_source_summary.columns = ["파일명", "샘플 행 개수"]
+
+        st.dataframe(
+            sample_source_summary,
+            use_container_width=True
+        )
+        
     st.session_state["data"] = data
+    st.session_state["sample_data"] = sample_data
+
+    if "cleaned_data" in st.session_state:
+        del st.session_state["cleaned_data"]
 
     st.success(
         "데이터가 저장되었습니다. 이제 다른 페이지에서 사용할 수 있습니다."

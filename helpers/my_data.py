@@ -1,4 +1,5 @@
 import numpy as np
+import json
 from io import BytesIO
 from pandas import to_datetime, DataFrame, ExcelWriter
 import pandas as pd
@@ -342,6 +343,74 @@ def read_csv_auto(uploaded_file):
         "지원하는 인코딩으로 CSV 파일을 읽을 수 없습니다. "
         f"마지막 오류: {last_error}"
     )
+
+
+#====================
+def read_data_file(uploaded_file):
+    """
+    업로드한 파일을 DataFrame으로 읽어오는 함수입니다.
+
+    지원 파일:
+    - CSV
+    - Excel(xlsx, xls)
+    - JSON
+
+    Returns
+    -------
+    data : DataFrame
+        읽어온 데이터
+    file_info : str
+        읽은 파일 형식 또는 인코딩 정보
+    """
+
+    file_name = uploaded_file.name.lower()
+
+    if file_name.endswith(".csv"):
+        data, encoding = read_csv_auto(uploaded_file)
+        return data, f"CSV / encoding={encoding}"
+
+    elif file_name.endswith((".xlsx", ".xls")):
+        data = pd.read_excel(uploaded_file)
+        return data, "Excel"
+
+    elif file_name.endswith(".json"):
+        json_data = json.load(uploaded_file)
+
+        if isinstance(json_data, list):
+            data = pd.DataFrame(json_data)
+
+        elif isinstance(json_data, dict):
+            data = pd.json_normalize(json_data)
+
+        else:
+            raise ValueError("지원하지 않는 JSON 구조입니다.")
+
+        return data, "JSON"
+
+    else:
+        raise ValueError("지원하지 않는 파일 형식입니다.")
+
+
+def make_sample_data(data, sample_size=5000, random_state=42):
+    """
+    대용량 데이터 분석 속도를 높이기 위해 샘플 데이터를 만드는 함수입니다.
+
+    전체 데이터가 sample_size보다 작으면 전체 데이터를 그대로 반환합니다.
+    전체 데이터가 sample_size보다 크면 sample_size만큼 무작위 샘플을 추출합니다.
+    """
+
+    if data is None or data.empty:
+        return data
+
+    if len(data) <= sample_size:
+        return data.copy()
+
+    return data.sample(
+        n=sample_size,
+        random_state=random_state
+    ).reset_index(drop=True)
+
+
 
 #==============================
 def categorical_summary_for_app(data):

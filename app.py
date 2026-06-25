@@ -54,7 +54,7 @@ st.title("자동 데이터 분석 대시보드")
 
 st.write(
     """
-    CSV 파일을 업로드하면 데이터 품질 점검, 정제, 시각화, 통계 분석까지
+    CSV, Excel 파일을 업로드하면 데이터 품질 점검, 정제, 시각화, 통계 분석까지
     단계별로 진행할 수 있는 Streamlit 기반 대시보드입니다.
     """
 )
@@ -65,7 +65,7 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.subheader("데이터 업로드")
-    st.write("CSV 파일을 업로드하고 여러 파일을 결합할 수 있습니다.")
+    st.write("CSV, Excel 파일을 업로드하고 여러 파일을 결합할 수 있습니다.")
 
 with col2:
     st.subheader("품질 점검")

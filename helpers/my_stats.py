@@ -1,11 +1,16 @@
 import numpy as np
+import pandas as pd
 from math import sqrt
 from pandas import DataFrame, melt, concat
 from scipy.stats import t
 from scipy.stats import normaltest, bartlett, levene
 from scipy.stats import ttest_1samp, wilcoxon, ttest_rel, ttest_ind, mannwhitneyu
+from scipy.stats import pearsonr, spearmanr
 from pingouin import anova, welch_anova, pairwise_tukey, pairwise_gameshowell
+from statsmodels.formula.api import ols
+import statsmodels.api as sm
 
+from statsmodels.stats.diagnostic import linear_reset
 from statannotations.Annotator import Annotator
 
 from . import my_plot
@@ -524,6 +529,259 @@ def posthoc_oneway(data, y, between, alpha=0.05, plot=True, palette=None,
     return result
 
 
+#==============================================
+# 이원분산분석
+#==============================================
+def anova_twoway(data, y, between, alpha=0.05):
+    """이원분산분석 (Two-way ANOVA)
+    두 개의 명목형 독립변수(주효과)와 그 상호작용효과가 연속형 종속변수에 미치는 영향을 검정한다.
+    Args:
+    data (DataFrame): 검정 대상 데이터프레임 (long 형식)
+    y (str): 종속변수(연속형) 컬럼명
+    between (list): 집단을 구분하는 두 개의 독립변수(명목형) 컬럼명 리스트
+    alpha (float): 유의수준 (기본값: 0.05)
+    Returns:
+    DataFrame: 이원분산분석 결과표에 설명용 컬럼을 덧붙인 결과표.- test: 사용한 검정 이름- np2: 편에타제곱(partial eta-squared) 기준 효과크기- effect_size: np2 기준 효과크기 해석 라벨(Large/Medium/Small/Negligible)- significant: p값이 유의수준 미만인지 여부
+    """
+    # between은 두 개의 명목형 변수를 담은 리스트여야 한다.
+    if not isinstance(between, (list, tuple)) or len(between) != 2:
+        raise ValueError("between은 두 개의 명목형 변수명을 담은 리스트여야 합니다.")
+    
+    # 분석에 사용할 컬럼만 추출하고 결측 행 제거
+    df = data[[y, between[0], between[1]]].dropna()
+
+    # 두 명목형 변수의 모든 조합(셀)별 값을 wide 형태로 모아 가정 검정에 전달
+    cell = df.copy()
+    cell["_cell"] = cell[between[0]].astype(str) + ", " + cell[between[1]].astype(str)
+    wide = my_prep.long2wide(cell, hue="_cell", values=y)
+    assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
+
+    # 등분산성 충족 여부 추출
+    equal_var = bool(assumption[assumption["test"] == "equal_var"]["result"].iloc[0])
+
+    # 등분산성 여부에 따라 분석 방법 분기
+    if equal_var:
+        # [등분산 충족] 일반 이원분산분석
+        test_name = "two-way ANOVA"
+        aov = anova(data=df, dv=y, between=list(between))
+        # p값 컬럼명은 pingouin 버전에 따라 다를 수 있어 유연하게 선택
+        pcol = "p-unc" if "p-unc" in aov.columns else "p_unc"
+    else:
+        test_name = "OLS (HC3) Type-II ANOVA"
+        # Q()로 컬럼명을 감싸 공백/특수문자가 있는 컬럼명도 안전하게 처리
+        formula = "Q('{0}') ~ C(Q('{1}')) * C(Q('{2}'))".format(y, between[0], 
+        between[1])
+        model = ols(formula, data=df).fit(cov_type="HC3")
+        aov = sm.stats.anova_lm(model, typ=2, robust="hc3")
+
+        # statsmodels 결과표에는 np2가 없으므로 편에타제곱을 직접 계산한다.
+        #   np2 = SS_effect / (SS_effect + SS_residual)
+        ss_resid = aov.loc["Residual", "sum_sq"]
+        aov["np2"] = aov["sum_sq"] / (aov["sum_sq"] + ss_resid)
+        aov.loc["Residual", "np2"] = np.nan
+
+        # 인덱스에 담긴 효과명을 Source 컬럼으로 변환
+        aov = aov.reset_index().rename(columns={"index": "Source"})
+        # statsmodels가 만든 효과명(C(Q('water')):C(Q('sun')) 등)을
+        # pingouin 결과와 동일한 형태(water * sun)로 정리한다.
+        aov["Source"] = (aov["Source"].str.replace("C(Q('", "", regex=False)
+                                        .str.replace("'))", "", regex=False)
+                                        .str.replace(":", " * ", regex=False))
+        pcol = "PR(>F)"
+
+    # 어떤 검정을 사용했는지 식별할 수 있도록 맨 앞에 test 컬럼 추가
+    aov.insert(0, "test", test_name)
+
+    # --- 효과크기 해석 컬럼 추가 --
+    # 편에타제곱(np2)을 Cohen의 기준표로 해석한다.
+    #   ≥ 0.14 → 큼, ≥ 0.06 → 중간, ≥ 0.01 → 작음, 그 미만 → 미미함
+    conditions = [
+        aov["np2"] >= 0.14,
+        aov["np2"] >= 0.06,
+        aov["np2"] >= 0.01,
+        ]
+    labels = ["Large", "Medium", "Small"]
+    aov["effect_size"] = np.select(conditions, labels, default="Negligible")
+
+    # np2가 없는 행(잔차 등)은 효과크기 해석 대상이 아니므로 표시를 비운다.
+    aov.loc[aov["np2"].isna(), "effect_size"] = "-"
+    # p값이 유의수준 미만이면 통계적으로 유의(귀무가설 기각)
+    aov["significant"] = aov[pcol] < alpha
+
+    return aov
+
+
+
+def posthoc_twoway(data, y, between, alpha=0.05):
+    """
+    이원분산분석(Two-way ANOVA)의 사후검정을 수행하는 함수
+        Args:
+            data (DataFrame): 검정 대상 데이터프레임 (long 형식)
+            y (str): 종속변수(연속형) 컬럼명
+            between (list): 집단을 구분하는 두 개의 독립변수(명목형) 컬럼명 리스트
+            alpha (float): 유의수준 (기본값: 0.05)
+        Returns:
+            DataFrame: 조합(셀) 집단 쌍별 사후검정 결과표(Tukey HSD 또는 Games-Howell)
+                - test: 사용한 사후검정 이름
+                - significant: p값이 유의수준 미만인지 여부
+                - effect_size: |Hedges' g| 기준 효과크기 해석 라벨
+    """
+    # between은 두 개의 명목형 변수를 담은 리스트여야 한다.
+    if not isinstance(between, (list, tuple)) or len(between) != 2:
+        raise ValueError("between은 두 개의 명목형 변수명을 담은 리스트여야 합니다.")
+    
+    # 분석에 사용할 컬럼만 추출하고 결측 행 제거
+    df = data[[y, between[0], between[1]]].dropna().copy()
+    
+    # 두 명목형 변수를 결합하여 조합(셀) 단위의 집단 컬럼 생성
+    group = "{0} * {1}".format(between[0], between[1])
+    df[group] = df[between[0]].astype(str) + ", " + df[between[1]].astype(str)
+
+    # 조합별 종속변수 값을 wide 형태로 모아 등분산성 가정 검정에 전달
+    wide = my_prep.long2wide(df, hue=group, values=y)
+    assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
+
+    # 등분산성 충족 여부 추출
+    equal_var = bool(assumption[assumption["test"] == "equal_var"]["result"].iloc[0])
+
+    # 등분산성 여부에 따라 사후검정 방법 선택
+    if equal_var:
+        posthoc_name = "Tukey HSD"
+        result = pairwise_tukey(data=df, dv=y, between=group)
+        # pingouin 버전/패치에 따라 p값 컬럼명이 다를 수 있어 유연하게 선택
+        pcol = "p-tukey" if "p-tukey" in result.columns else "p_tukey"
+
+    else:
+        posthoc_name = "Games-Howell"
+        result = pairwise_gameshowell(data=df, dv=y, between=group)
+        pcol = "pval"
+
+    # 어떤 사후검정을 사용했는지 식별할 수 있도록 맨 앞에 test 컬럼 추가
+    result.insert(0, "test", posthoc_name)
+    # p값이 유의수준 미만이면 통계적으로 유의(귀무가설 기각)
+    result["significant"] = result[pcol] < alpha
+
+    # --- 효과크기 해석 컬럼 추가 --
+    # hedges(Hedges' g)는 두 집단 평균차에 대한 표준화 효과크기로,
+    # Cohen의 d 기준표를 따라 절댓값으로 해석한다.
+    #   ≥ 0.8 → 큼, ≥ 0.5 → 중간, ≥ 0.2 → 작음, 그 미만 → 미미함
+    abs_hedges = result["hedges"].abs()
+    conditions = [
+        abs_hedges >= 0.8,
+        abs_hedges >= 0.5,
+        abs_hedges >= 0.2,
+        ]
+    labels = ["Large", "Medium", "Small"]
+    result["effect_size"] = np.select(conditions, labels, default="Negligible")
+
+    return result
+
+#==============================================
+# 상관분석 함수 정의
+#==============================================
+def correlation(data, x, y, alpha=0.05, plot=True, palette=None, 
+                title=None, xlabel=None, ylabel=None, width=1280, height=640, save_path=None):
+    """
+    두 연속형 변수의 상관분석을 일괄 수행하는 함수
+
+     Args:
+        data (DataFrame): 분석 대상 데이터프레임
+        x (str): 첫 번째 연속형 변수 컬럼명
+        y (str): 두 번째 연속형 변수 컬럼명
+        alpha (float): 유의수준 (기본값: 0.05)
+        plot (bool): 산점도(회귀선 포함)를 시각화할지 여부 (기본값: True)
+        palette (str or list): 색상 팔레트 (기본값: None)
+        title (str): 그래프 제목 (기본값: None)
+        xlabel (str): x축 라벨 (기본값: None)
+        ylabel (str): y축 라벨 (기본값: None)
+        width (int): 그래프 너비 (기본값: 1280)
+        height (int): 그래프 높이 (기본값: 640)
+        save_path (str): 그래프 저장 경로 (기본값: None)
+
+    Returns:
+        DataFrame: (x, y)를 인덱스로 하는 단일 행 결과표
+    """
+
+    # -- 1) 같은 행끼리 비교해야 하므로 두 컬럼을 함께 결측 행 제거 --
+    pair = data[[x,y]].dropna()
+    vx, vy = pair[x], pair[y]
+    
+    # -- 2) 정규성 검정 (test_assumptitons 재사용) --
+    report = test_assumptions(pair, columns=[x, y], alpha=alpha)
+    norm_x = bool(report.loc[x, 'result'])
+    norm_y = bool(report.loc[y, 'result'])
+
+    # -- 3) 선형성 검정 (Ramsey RESET Test) --
+    # H0: 모형이 올바르게 설정됨(선형). p >=alpha이면 선형성 충족
+    X = sm.add_constant(vx)
+    model = sm.OLS(vy, X).fit()
+    linearity = bool(linear_reset(model, power=2, use_f=True).pvalue >=alpha)
+
+    # -- 4) 이상치(영향점) 및 왜도 점검 --
+    # IQR(사분위수) 울타리를 벗어난 행을 제외한 데이터를 별도로 만들어, 피어슨 r이 크게 바뀌면(>=0.1) '영향점'으로 판단한다.
+    # 단순히 이상치가 존재하는 것과 상관계수를 왜곡하는 것은 다르다.
+    trimmed = pair.copy()
+    for col in (x,y):
+        # 울타리는 항상 원본(pair) 기준으로 계산
+        q1 = pair[col].quantile(0.25)
+        q3 = pair[col].quantile(0.75)
+        iqr = q3 - q1
+        trimmed = trimmed[(trimmed[col] >= q1 - 1.5 * iqr) & (trimmed[col] <= q3 + 1.5 * iqr)]
+
+    r_full = pearsonr(vx, vy)[0]
+    r_trim = pearsonr(trimmed[x], trimmed[y])[0]
+    influential = bool(abs(r_full - r_trim) >= 0.1)
+    high_skew = bool(abs(vx.skew()) > 1 or abs(vy.skew()) >1)    
+
+    # -- 5) 가정에 따른 상관계수 선택 --
+    # 모든 가정을 충족하면 피어슨, 하나라도 위반하면 스피어만을 사용한다.
+    use_pearson = linearity and norm_x and norm_y and \
+                (not influential) and (not high_skew)
+
+    if use_pearson:
+        method = "Pearson"
+        coef, p = pearsonr(vx, vy)
+    else:
+        method = "Spearman"
+        coef, p = spearmanr(vx, vy)
+
+    # --- 6) 상관 강도 해석 라벨 ---
+    # |r| > 0.7 → 강함, 0.3 < |r| <= 0.7 → 중간,
+    # 0 < |r| <= 0.3 → 약함, 그 외 → 없음
+    a = abs(coef)
+    if a > 0.7:    strength = "Strong"
+    elif a > 0.3:  strength = "Moderate"
+    elif a > 0:    strength = "Weak"
+    else:          strength = "None"
+    
+    # --- 7) 가정 점검 결과와 선택된 상관계수를 단일 행 결과표로 정리 ---
+    row = {
+        "x": x,
+        "y": y,
+        "method": method,
+        "coef": round(float(coef), 4),
+        "p-value": round(float(p), 4),
+        "strength": strength,
+        "significant": bool(p < alpha),
+        "normality_x": norm_x,
+        "normality_y": norm_y,
+        "linearity": linearity,
+        "influential_outlier": influential,
+        "high_skew": high_skew,
+    }
+    result_df = DataFrame([row]).set_index(["x", "y"])
+    
+   # --- 8) 시각화 ---
+    # 시각화 옵션이 True인 경우, 산점도와 회귀선을 시각화
+    if plot:
+        my_plot.lmplot(data=pair, x=x, y=y, palette=palette,
+                    title=title, xlabel=xlabel, ylabel=ylabel,
+                    width=width, height=height, save_path=save_path)
+
+    # --- 9) 결과 반환 ---
+    return result_df
+
+
 # ==========================================================
 # Streamlit 앱용 통계 검정 보조 함수
 # ==========================================================
@@ -901,3 +1159,172 @@ def make_test_interpretation(test_name, p_value, alpha=0.05):
             "따라서 귀무가설(H0)을 기각할 수 없습니다. "
             "즉, 통계적으로 유의한 차이가 있다고 보기 어렵습니다."
         )
+    
+def make_posthoc_insight(posthoc_result, alpha=0.05):
+    """
+    사후검정 결과표를 해석해서 핵심 인사이트 문장을 만들어주는 함수입니다.
+
+    이 함수는 사후검정 결과에서 다음 내용을 자동으로 찾습니다.
+
+    1. 전체 비교 조합 수
+    2. 통계적으로 유의한 비교 조합 수
+    3. 평균 차이가 가장 큰 집단쌍
+    4. p-value가 가장 작은 집단쌍
+
+    Parameters
+    ----------
+    posthoc_result : DataFrame
+        사후검정 결과표
+    alpha : float
+        유의수준
+
+    Returns
+    -------
+    str
+        사후검정 해석 문장
+    """
+
+    if posthoc_result is None or posthoc_result.empty:
+        return "사후검정 결과가 없어 인사이트를 생성할 수 없습니다."
+
+    result = posthoc_result.copy()
+
+    # ------------------------------------------------------------
+    # 1. 집단쌍 컬럼 찾기
+    # ------------------------------------------------------------
+    # 사후검정 결과는 보통 A, B 컬럼에 비교 집단명이 들어갑니다.
+    # 예: A = D10, B = F11
+    # ------------------------------------------------------------
+    group_a_column = None
+    group_b_column = None
+
+    if "A" in result.columns and "B" in result.columns:
+        group_a_column = "A"
+        group_b_column = "B"
+
+    elif "group1" in result.columns and "group2" in result.columns:
+        group_a_column = "group1"
+        group_b_column = "group2"
+
+    else:
+        return "사후검정 결과에서 비교 집단 컬럼을 찾지 못했습니다."
+
+    # ------------------------------------------------------------
+    # 2. p-value 컬럼 찾기
+    # ------------------------------------------------------------
+    # 사후검정 함수에 따라 p-value 컬럼명이 다를 수 있습니다.
+    # 예: p-tukey, pval, p-corr, p-unc
+    # ------------------------------------------------------------
+    p_value_column = None
+
+    possible_p_columns = [
+        "p-tukey",
+        "pval",
+        "p-corr",
+        "p-unc",
+        "p_unc",
+        "p-value",
+        "p"
+    ]
+
+    for column in possible_p_columns:
+        if column in result.columns:
+            p_value_column = column
+            break
+
+    if p_value_column is None:
+        return "사후검정 결과에서 p-value 컬럼을 찾지 못했습니다."
+
+    result[p_value_column] = pd.to_numeric(
+        result[p_value_column],
+        errors="coerce"
+    )
+
+    # ------------------------------------------------------------
+    # 3. 평균 차이 컬럼 찾기
+    # ------------------------------------------------------------
+    # 사후검정 결과에는 보통 diff 컬럼이 있습니다.
+    # diff가 양수/음수인지에 따라 어느 집단 평균이 큰지 판단할 수 있습니다.
+    # ------------------------------------------------------------
+    diff_column = None
+
+    possible_diff_columns = [
+        "diff",
+        "mean_diff",
+        "mean difference"
+    ]
+
+    for column in possible_diff_columns:
+        if column in result.columns:
+            diff_column = column
+            break
+
+    # ------------------------------------------------------------
+    # 4. 전체 비교 수와 유의한 비교 수 계산
+    # ------------------------------------------------------------
+    total_count = len(result)
+
+    significant_result = result[
+        result[p_value_column] < alpha
+    ].copy()
+
+    significant_count = len(significant_result)
+
+    if significant_count == 0:
+        return (
+            f"사후검정 결과, 총 {total_count}개의 비교 조합 중 "
+            "통계적으로 유의한 차이가 확인된 조합은 없습니다."
+        )
+
+    insight_text = (
+        f"사후검정 결과, 총 {total_count}개의 비교 조합 중 "
+        f"{significant_count}개 조합에서 통계적으로 유의한 차이가 확인되었습니다."
+    )
+
+    # ------------------------------------------------------------
+    # 5. 평균 차이가 가장 큰 집단쌍 찾기
+    # ------------------------------------------------------------
+    if diff_column is not None:
+        significant_result[diff_column] = pd.to_numeric(
+            significant_result[diff_column],
+            errors="coerce"
+        )
+
+        max_diff_row = significant_result.loc[
+            significant_result[diff_column].abs().idxmax()
+        ]
+
+        group_a = max_diff_row[group_a_column]
+        group_b = max_diff_row[group_b_column]
+        diff_value = max_diff_row[diff_column]
+
+        if diff_value > 0:
+            direction_text = f"`{group_a}` 집단의 평균이 `{group_b}` 집단보다 높습니다."
+        elif diff_value < 0:
+            direction_text = f"`{group_b}` 집단의 평균이 `{group_a}` 집단보다 높습니다."
+        else:
+            direction_text = "두 집단의 평균 차이는 거의 없습니다."
+
+        insight_text += (
+            f"\n\n가장 큰 평균 차이는 `{group_a}` 집단과 `{group_b}` 집단 사이에서 나타났습니다. "
+            f"{direction_text}"
+        )
+
+    # ------------------------------------------------------------
+    # 6. p-value가 가장 작은 집단쌍 찾기
+    # ------------------------------------------------------------
+    min_p_row = significant_result.loc[
+        significant_result[p_value_column].idxmin()
+    ]
+
+    min_p_group_a = min_p_row[group_a_column]
+    min_p_group_b = min_p_row[group_b_column]
+    min_p_value = min_p_row[p_value_column]
+
+    insight_text += (
+        f"\n\n가장 작은 p-value를 보인 비교는 "
+        f"`{min_p_group_a}` 집단과 `{min_p_group_b}` 집단입니다. "
+        f"p-value는 {min_p_value:.3f}입니다."
+    )
+
+    return insight_text

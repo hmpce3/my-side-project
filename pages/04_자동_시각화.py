@@ -76,6 +76,93 @@ if "data" not in st.session_state:
     st.warning("먼저 '데이터 업로드 / 결합' 페이지에서 CSV 파일을 업로드해주세요.")
     st.stop()
 
+# ------------------------------------------------------------
+# 시각화에 사용할 데이터 선택
+# ------------------------------------------------------------
+# 정제 데이터가 있으면 원본/정제 중 선택할 수 있게 합니다.
+# 그리고 각 데이터에 대해 빠른 분석용 샘플 또는 전체 데이터를 선택합니다.
+# ------------------------------------------------------------
+# ------------------------------------------------------------
+# 시각화에 사용할 데이터 선택
+# ------------------------------------------------------------
+if "cleaned_data" in st.session_state:
+    data_options = {
+        "정제 데이터": st.session_state["cleaned_data"],
+        "원본 데이터": st.session_state["data"]
+    }
+else:
+    data_options = {
+        "원본 데이터": st.session_state["data"]
+    }
+
+data_source = st.radio(
+    "시각화에 사용할 데이터를 선택하세요",
+    list(data_options.keys()),
+    horizontal=True
+)
+
+selected_data = data_options[data_source]
+
+
+# ------------------------------------------------------------
+# 원본 데이터는 샘플/전체를 선택할 수 있게 합니다.
+# 정제 데이터는 아직 cleaned_sample_data를 만들지 않았기 때문에
+# 일단 정제 데이터 전체를 사용합니다.
+# ------------------------------------------------------------
+if data_source == "원본 데이터" and "sample_data" in st.session_state:
+    data_scope = st.radio(
+        "시각화에 사용할 데이터 범위를 선택하세요",
+        ["빠른 분석용 샘플 데이터", "전체 데이터"],
+        horizontal=True
+    )
+
+    if data_scope == "빠른 분석용 샘플 데이터":
+        data = st.session_state["sample_data"]
+        data_source_name = "원본 데이터 - 샘플"
+
+        st.info(
+            f"현재 {len(data):,}행의 샘플 데이터로 자동 시각화를 생성합니다."
+        )
+
+    else:
+        data = st.session_state["data"]
+        data_source_name = "원본 데이터 - 전체"
+
+        st.warning(
+            f"현재 {len(data):,}행의 전체 데이터로 자동 시각화를 생성합니다. "
+            "데이터가 크면 시간이 오래 걸릴 수 있습니다."
+        )
+
+else:
+    data = selected_data
+    data_source_name = data_source
+
+    if data_source == "정제 데이터":
+        st.success(
+            f"현재 {len(data):,}행의 정제 데이터로 자동 시각화를 생성합니다."
+        )
+    else:
+        st.info(
+            f"현재 {len(data):,}행의 원본 데이터로 자동 시각화를 생성합니다."
+        )
+
+# ------------------------------------------------------------
+# 자동 시각화에서 제외할 관리용 컬럼 제거
+# ------------------------------------------------------------
+# __source_file__은 여러 파일을 결합했을 때
+# 각 행이 어느 파일에서 왔는지 확인하기 위한 컬럼입니다.
+#
+# 데이터 자체에서는 유지하지만,
+# 자동 시각화 추천 변수로는 사용하지 않기 위해
+# 시각화용 데이터(chart_data)에서만 제외합니다.
+# ------------------------------------------------------------
+exclude_columns = ["__source_file__"]
+
+chart_data = data.drop(
+    columns=exclude_columns,
+    errors="ignore"
+)
+
 
 # ------------------------------------------------------------
 # 2. 사용할 데이터 결정
@@ -88,17 +175,7 @@ if "data" not in st.session_state:
 #
 # 정제 데이터가 없다면 원본 데이터를 사용합니다.
 # ------------------------------------------------------------
-if "cleaned_data" in st.session_state:
-    data = st.session_state["cleaned_data"]
-    data_source_name = "정제 데이터"
 
-    st.success("정제 데이터를 기준으로 자동 시각화를 생성합니다.")
-
-else:
-    data = st.session_state["data"]
-    data_source_name = "원본 데이터"
-
-    st.info("정제 데이터가 아직 없어서 원본 데이터를 기준으로 자동 시각화를 생성합니다.")
 
 # ------------------------------------------------------------
 # 2-1. 시각화 전 날짜 타입 점검
@@ -170,13 +247,13 @@ with col3:
 # 날짜형 컬럼:
 # - 선그래프 X축에 사용
 # ------------------------------------------------------------
-numeric_columns = data.select_dtypes(include="number").columns.tolist()
+numeric_columns = chart_data.select_dtypes(include="number").columns.tolist()
 
-categorical_columns = data.select_dtypes(
+categorical_columns = chart_data.select_dtypes(
     include=["object", "category"]
 ).columns.tolist()
 
-datetime_columns = data.select_dtypes(
+datetime_columns = chart_data.select_dtypes(
     include=["datetime", "datetimetz"]
 ).columns.tolist()
 
@@ -414,7 +491,7 @@ else:
         )
 
         fig = my_plot.make_histogram(
-            data,
+            chart_data,
             best_numeric_column
         )
 
@@ -435,7 +512,7 @@ else:
         )
 
         fig = my_plot.make_bar_count(
-            data,
+            chart_data,
             best_categorical_column
         )
 
@@ -465,7 +542,7 @@ else:
         )
 
         fig = my_plot.make_scatter(
-            data,
+            chart_data,
             x_column,
             y_column,
             best_color_column
@@ -494,7 +571,7 @@ else:
         )
 
         fig = my_plot.make_correlation_heatmap(
-            data,
+            chart_data,
             heatmap_columns
         )
 
@@ -515,7 +592,7 @@ else:
         )
 
         fig = my_plot.make_box(
-            data,
+            chart_data,
             best_numeric_column,
             best_categorical_column
         )

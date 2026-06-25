@@ -3,8 +3,10 @@ import pandas as pd
 import importlib
 
 from helpers import my_stats
+from helpers import my_plot
 
 importlib.reload(my_stats)
+importlib.reload(my_plot)
 
 def get_first_p_value(result_df):
     """
@@ -45,27 +47,44 @@ if "data" not in st.session_state:
 
 
 # ------------------------------------------------------------
-# 3. 사용할 데이터 선택
+# 통계 분석에 사용할 데이터 선택
 # ------------------------------------------------------------
-# 정제 데이터가 있으면 원본 데이터와 정제 데이터 중 선택할 수 있게 합니다.
-# 정제 데이터가 없으면 원본 데이터를 사용합니다.
+# 통계 분석은 정제된 분석용 데이터를 기준으로 수행하는 것이 좋습니다.
+# 정제 데이터가 있으면 정제 데이터를 기본값으로 사용하고,
+# 필요하면 원본 데이터도 선택할 수 있게 합니다.
 # ------------------------------------------------------------
 if "cleaned_data" in st.session_state:
     data_source = st.radio(
         "통계 분석에 사용할 데이터를 선택하세요",
-        ["원본 데이터", "정제 데이터"],
+        ["정제 데이터", "원본 데이터"],
         horizontal=True
     )
 
-    if data_source == "원본 데이터":
-        data = st.session_state["data"]
-    else:
+    if data_source == "정제 데이터":
         data = st.session_state["cleaned_data"]
+    else:
+        data = st.session_state["data"]
 
 else:
     st.info("정제 데이터가 아직 없어 원본 데이터를 사용합니다.")
+    data_source = "원본 데이터"
     data = st.session_state["data"]
 
+# ------------------------------------------------------------
+# 통계 분석에서 제외할 관리용 컬럼 설정
+# ------------------------------------------------------------
+# __source_file__은 여러 파일을 결합했을 때
+# 각 행이 어느 파일에서 왔는지 확인하기 위한 컬럼입니다.
+#
+# 통계 분석에서는 종속변수, 집단변수, 상관분석 변수로 사용하기 부적절하므로
+# 통계용 데이터에서는 제외합니다.
+# ------------------------------------------------------------
+exclude_columns = ["__source_file__"]
+
+stats_data = data.drop(
+    columns=exclude_columns,
+    errors="ignore"
+)
 
 # ------------------------------------------------------------
 # 4. 데이터 기본 정보
@@ -94,9 +113,9 @@ with col2:
 # - 집단을 나누는 변수
 # - 예: 성별, 지역, 요일, 브랜드, 구분
 # ------------------------------------------------------------
-numeric_columns = data.select_dtypes(include="number").columns.tolist()
+numeric_columns = stats_data.select_dtypes(include="number").columns.tolist()
 
-categorical_columns = data.select_dtypes(
+categorical_columns = stats_data.select_dtypes(
     include=["object", "category"]
 ).columns.tolist()
 
@@ -122,7 +141,8 @@ test_type = st.selectbox(
         "단일표본 T-TEST",
         "대응표본 T-TEST",
         "독립표본 T-TEST",
-        "분산분석 ANOVA"
+        "일원분산분석 ANOVA",
+        "상관분석"
     ]
 )
 
@@ -164,7 +184,7 @@ if test_type == "단일표본 T-TEST":
     if st.button("단일표본 T-TEST 실행"):
         # 단일표본 검정에서는 선택한 변수 하나의 정규성을 확인합니다.
         assumption_result = my_stats.test_assumptions(
-            data,
+            stats_data,
             columns=selected_column,
             alpha=alpha
         )
@@ -183,7 +203,7 @@ if test_type == "단일표본 T-TEST":
 
         # 기존 수업 함수 사용
         test_result = my_stats.test_1sample(
-            data,
+            stats_data,
             column=selected_column,
             popmean=popmean,
             alpha=alpha
@@ -282,7 +302,7 @@ elif test_type == "대응표본 T-TEST":
 
         # 기존 수업 함수 사용
         test_result = my_stats.test_paired(
-            data,
+            stats_data,
             before=before_column,
             after=after_column,
             alpha=alpha,
@@ -453,7 +473,7 @@ elif test_type == "독립표본 T-TEST":
 
 
 # ------------------------------------------------------------
-# 10. 분산분석 ANOVA
+# 10. 일원분산분석 ANOVA
 # ------------------------------------------------------------
 # 목적:
 # 3개 이상 집단의 평균이 모두 같은지 확인합니다.
@@ -463,8 +483,8 @@ elif test_type == "독립표본 T-TEST":
 # - 지역별 평균 매출이 다른가?
 # - 브랜드별 평균 가격이 다른가?
 # ------------------------------------------------------------
-elif test_type == "분산분석 ANOVA":
-    st.subheader("분산분석 ANOVA")
+elif test_type == "일원분산분석 ANOVA":
+    st.subheader("일원분산분석 ANOVA")
 
     if not categorical_columns:
         st.warning("집단을 나눌 범주형 컬럼이 없습니다.")
@@ -500,7 +520,7 @@ elif test_type == "분산분석 ANOVA":
     if len(selected_groups) < 3:
         st.warning("분산분석은 최소 3개 이상의 집단이 필요합니다.")
 
-    elif st.button("분산분석 ANOVA 실행"):
+    elif st.button("일원분산분석 ANOVA 실행"):
         # ------------------------------------------------------------
         # 1) 선택한 집단과 숫자형 변수만 남깁니다.
         # ------------------------------------------------------------
@@ -715,3 +735,145 @@ elif test_type == "분산분석 ANOVA":
                 posthoc_result_display,
                 use_container_width=True
             )
+
+            posthoc_insight = my_stats.make_posthoc_insight(
+                posthoc_result,
+                alpha=alpha
+            )
+
+            st.subheader("사후검정 인사이트")
+
+            st.info(posthoc_insight)
+
+# ------------------------------------------------------------
+# 상관분석
+# ------------------------------------------------------------
+# 목적:
+# 두 숫자형 변수가 함께 움직이는 정도를 확인합니다.
+#
+# 예:
+# - 기온이 높을수록 대여량도 증가하는가?
+# - 매출액과 방문자 수는 관련이 있는가?
+# - 공부시간과 시험점수는 함께 증가하는가?
+# ------------------------------------------------------------
+elif test_type == "상관분석":
+    st.subheader("상관분석")
+
+    if len(numeric_columns) < 2:
+        st.warning("상관분석을 수행하려면 숫자형 컬럼이 최소 2개 필요합니다.")
+        st.stop()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        x_column = st.selectbox(
+            "첫 번째 숫자형 변수를 선택하세요",
+            numeric_columns,
+            key="corr_x_column"
+        )
+
+    with col2:
+        y_column = st.selectbox(
+            "두 번째 숫자형 변수를 선택하세요",
+            numeric_columns,
+            index=1 if len(numeric_columns) > 1 else 0,
+            key="corr_y_column"
+        )
+
+    st.write(f"""
+    **귀무가설(H0)**: `{x_column}`와 `{y_column}` 사이에는 선형 상관관계가 없다.  
+    **대립가설(H1)**: `{x_column}`와 `{y_column}` 사이에는 선형 상관관계가 있다.
+    """)
+
+    if x_column == y_column:
+        st.warning("서로 다른 두 숫자형 변수를 선택해주세요.")
+
+    elif st.button("상관분석 실행"):
+        # ------------------------------------------------------------
+        # 1. 상관분석 실행
+        # ------------------------------------------------------------
+        # my_stats.correlation() 함수는 가정 점검 결과에 따라
+        # Pearson 또는 Spearman 상관분석을 자동으로 선택합니다.
+        # ------------------------------------------------------------
+        result = my_stats.correlation(
+            stats_data,
+            x=x_column,
+            y=y_column,
+            alpha=alpha,
+            plot=False
+        )
+
+        result_display = my_stats.format_stat_result_for_app(
+            result.reset_index()
+        )
+
+        st.subheader("상관분석 결과")
+
+        st.dataframe(
+            result_display,
+            use_container_width=True
+        )
+
+        # ------------------------------------------------------------
+        # 2. 산점도 시각화
+        # ------------------------------------------------------------
+        # 상관분석은 숫자만 보는 것보다 산점도를 함께 보는 것이 좋습니다.
+        # ------------------------------------------------------------
+        st.subheader("산점도")
+
+        chart_data = data[[x_column, y_column]].dropna()
+
+        fig = my_plot.make_scatter_with_trendline(
+            chart_data,
+            x_column,
+            y_column
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        # ------------------------------------------------------------
+        # 3. 결과 해석
+        # ------------------------------------------------------------
+        coef = float(result["coef"].iloc[0])
+        p_value = float(result["p-value"].iloc[0])
+        method = result["method"].iloc[0]
+        strength = result["strength"].iloc[0]
+
+        if coef > 0:
+            direction_text = "양의 방향"
+            relation_text = (
+                f"`{x_column}` 값이 커질수록 `{y_column}` 값도 함께 커지는 경향이 있습니다."
+            )
+        elif coef < 0:
+            direction_text = "음의 방향"
+            relation_text = (
+                f"`{x_column}` 값이 커질수록 `{y_column}` 값은 작아지는 경향이 있습니다."
+            )
+        else:
+            direction_text = "뚜렷한 방향 없음"
+            relation_text = "두 변수 사이에 뚜렷한 선형 관계가 보이지 않습니다."
+
+        if p_value < alpha:
+            significance_text = (
+                f"p-value는 {p_value:.3f}으로 유의수준 {alpha}보다 작습니다. "
+                "따라서 두 변수의 상관관계는 통계적으로 유의하다고 볼 수 있습니다."
+            )
+        else:
+            significance_text = (
+                f"p-value는 {p_value:.3f}으로 유의수준 {alpha}보다 크거나 같습니다. "
+                "따라서 두 변수의 상관관계가 통계적으로 유의하다고 보기 어렵습니다."
+            )
+
+        st.subheader("결과 해석")
+
+        st.info(
+            f"{method} 상관분석 결과, 상관계수는 {coef:.3f}입니다. "
+            f"상관의 방향은 {direction_text}이며, 강도는 {strength}입니다.\n\n"
+            f"{relation_text}\n\n"
+            f"{significance_text}\n\n"
+            "단, 상관분석은 두 변수가 함께 움직이는 정도를 확인하는 방법이며 "
+            "원인과 결과를 의미하지는 않습니다."
+        )

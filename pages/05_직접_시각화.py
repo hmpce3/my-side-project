@@ -21,6 +21,83 @@ if "data" not in st.session_state:
     st.warning("먼저 '데이터 업로드 / 결합' 페이지에서 CSV 파일을 업로드해주세요.")
     st.stop()
 
+# ------------------------------------------------------------
+# 시각화에 사용할 데이터 선택
+# ------------------------------------------------------------
+data_options = {
+    "원본 데이터": st.session_state["data"]
+}
+
+if "cleaned_data" in st.session_state:
+    data_options["정제 데이터"] = st.session_state["cleaned_data"]
+
+data_source = st.radio(
+    "시각화에 사용할 데이터를 선택하세요",
+    list(data_options.keys()),
+    horizontal=True
+)
+
+selected_data = data_options[data_source]
+
+
+
+# ------------------------------------------------------------
+# 원본 데이터는 샘플/전체를 선택할 수 있게 합니다.
+# 정제 데이터는 아직 cleaned_sample_data를 만들지 않았기 때문에
+# 일단 정제 데이터 전체를 사용합니다.
+# ------------------------------------------------------------
+if data_source == "원본 데이터" and "sample_data" in st.session_state:
+    data_scope = st.radio(
+        "시각화에 사용할 데이터 범위를 선택하세요",
+        ["빠른 분석용 샘플 데이터", "전체 데이터"],
+        horizontal=True
+    )
+
+    if data_scope == "빠른 분석용 샘플 데이터":
+        data = st.session_state["sample_data"]
+        data_source_name = "원본 데이터 - 샘플"
+
+        st.info(
+            f"현재 {len(data):,}행의 샘플 데이터로 직접 시각화를 생성합니다."
+        )
+
+    else:
+        data = st.session_state["data"]
+        data_source_name = "원본 데이터 - 전체"
+
+        st.warning(
+            f"현재 {len(data):,}행의 전체 데이터로 직접 시각화를 생성합니다. "
+            "데이터가 크면 시간이 오래 걸릴 수 있습니다."
+        )
+
+else:
+    data = selected_data
+    data_source_name = data_source
+
+    if data_source == "정제 데이터":
+        st.success(
+            f"현재 {len(data):,}행의 정제 데이터로 직접 시각화를 생성합니다."
+        )
+    else:
+        st.info(
+            f"현재 {len(data):,}행의 원본 데이터로 직접 시각화를 생성합니다."
+        )
+
+# ------------------------------------------------------------
+# 직접 시각화에서 제외할 관리용 컬럼 설정
+# ------------------------------------------------------------
+# __source_file__은 여러 파일을 결합했을 때
+# 각 행이 어느 파일에서 왔는지 확인하기 위한 컬럼입니다.
+#
+# 직접 시각화에서 축, 색상, 필터 후보로 계속 보이면
+# 분석용 변수와 헷갈릴 수 있으므로 기본 후보에서는 제외합니다.
+# ------------------------------------------------------------
+exclude_columns = ["__source_file__"]
+
+chart_data = data.drop(
+    columns=exclude_columns,
+    errors="ignore"
+)
 
 # ------------------------------------------------------------
 # 3. 색상 팔레트 관련 함수
@@ -121,27 +198,7 @@ def choose_single_color(default_color, key_prefix):
     )
 
 
-# ------------------------------------------------------------
-# 4. 사용할 데이터 선택
-# ------------------------------------------------------------
-# 정제 데이터가 있으면 원본 데이터와 정제 데이터 중 선택할 수 있습니다.
-# 정제 데이터가 없으면 원본 데이터를 사용합니다.
-# ------------------------------------------------------------
-if "cleaned_data" in st.session_state:
-    data_source = st.radio(
-        "시각화에 사용할 데이터",
-        ["원본 데이터", "정제 데이터"],
-        horizontal=True,
-    )
 
-    if data_source == "원본 데이터":
-        data = st.session_state["data"]
-    else:
-        data = st.session_state["cleaned_data"]
-
-else:
-    st.info("정제 데이터가 아직 없어서 원본 데이터를 사용합니다.")
-    data = st.session_state["data"]
 
 
 # ------------------------------------------------------------
@@ -231,17 +288,15 @@ if filtered_data.empty:
 # ------------------------------------------------------------
 # 그래프마다 필요한 컬럼 타입이 다르기 때문에 미리 분류해둡니다.
 # ------------------------------------------------------------
-numeric_columns = filtered_data.select_dtypes(include="number").columns.tolist()
+numeric_columns = chart_data.select_dtypes(include="number").columns.tolist()
 
-categorical_columns = filtered_data.select_dtypes(
+categorical_columns = chart_data.select_dtypes(
     include=["object", "category"]
 ).columns.tolist()
 
-datetime_columns = filtered_data.select_dtypes(
+datetime_columns = chart_data.select_dtypes(
     include=["datetime", "datetimetz"]
 ).columns.tolist()
-
-all_columns = filtered_data.columns.tolist()
 
 
 # ------------------------------------------------------------

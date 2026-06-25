@@ -4,6 +4,7 @@ import numpy as np
 from pandas import pivot_table
 from scipy.spatial import ConvexHull
 from . import my_stats
+import plotly.express as px
 
 #----------------------------------------------------------
 
@@ -1478,6 +1479,48 @@ def make_map(data, lat_column, lon_column, color_column=None, size_column=None, 
 
     fig.update_layout(
         margin=dict(l=0, r=0, t=40, b=0)
+    )
+
+    return fig
+
+def make_scatter_with_trendline(data, x, y, color=None):
+    """
+    산점도에 선형 추세선을 함께 표시하는 함수입니다.
+
+    Parameters
+    ----------
+    data : DataFrame
+        시각화할 데이터
+    x : str
+        x축 숫자형 컬럼
+    y : str
+        y축 숫자형 컬럼
+    color : str or None
+        색상으로 구분할 컬럼
+
+    Returns
+    -------
+    fig
+        Plotly Figure
+    """
+
+    chart_data = data[[x, y]].dropna()
+
+    if color is not None:
+        chart_data = data[[x, y, color]].dropna()
+
+    fig = px.scatter(
+        chart_data,
+        x=x,
+        y=y,
+        color=color,
+        trendline="ols",
+        opacity=0.65,
+        title=f"{x}와 {y}의 관계"
+    )
+
+    fig.update_traces(
+        marker=dict(size=7)
     )
 
     return fig

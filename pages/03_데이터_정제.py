@@ -158,15 +158,17 @@ else:
 st.subheader("정제 작업 선택")
 
 cleaning_options = st.multiselect(
-    "필요한 정제 작업을 선택하세요",
+    "수행할 정제 작업을 선택하세요",
     [
         "중복 행 제거",
         "결측치 있는 행 제거",
         "결측치 채우기",
         "컬럼 삭제",
+        "컬럼명 변경",
         "데이터 타입 변경",
-        "여러 컬럼을 하나로 합치기 (wide → long)",
-    ],
+        "날짜 파생변수 생성",
+        "여러 컬럼을 하나로 합치기 (wide → long)"
+    ]
 )
 
 
@@ -363,6 +365,87 @@ if "컬럼 삭제" in cleaning_options:
 
 
 # ------------------------------------------------------------
+# 컬럼명 변경
+# ------------------------------------------------------------
+# 공공데이터는 컬럼명이 길거나 특수문자가 포함된 경우가 많습니다.
+# 분석과 시각화를 편하게 하기 위해 컬럼명을 원하는 이름으로 바꿀 수 있습니다.
+# ------------------------------------------------------------
+if "컬럼명 변경" in cleaning_options:
+    st.subheader("컬럼명 변경")
+
+    st.caption(
+        "변경할 컬럼을 선택하고 새 컬럼명을 입력하면 컬럼명이 변경됩니다."
+    )
+
+    rename_columns = st.multiselect(
+        "이름을 변경할 컬럼을 선택하세요",
+        cleaned_data.columns.tolist(),
+        key="rename_columns"
+    )
+
+    rename_map = {}
+
+    if rename_columns:
+        st.write("새 컬럼명을 입력하세요.")
+
+        for column in rename_columns:
+            new_column_name = st.text_input(
+                f"{column} → 새 컬럼명",
+                value=column,
+                key=f"rename_{column}"
+            )
+
+            if new_column_name != column:
+                rename_map[column] = new_column_name
+
+        if rename_map:
+            duplicated_new_names = [
+                new_name for new_name in rename_map.values()
+                if list(rename_map.values()).count(new_name) > 1
+                or (
+                    new_name in cleaned_data.columns
+                    and new_name not in rename_map.keys()
+                )
+            ]
+
+            if duplicated_new_names:
+                st.warning(
+                    f"중복되는 컬럼명이 있습니다: {set(duplicated_new_names)}"
+                )
+
+            else:
+                apply_rename = st.checkbox(
+                    "컬럼명 변경 적용",
+                    key="apply_rename_columns"
+                )
+
+                if apply_rename:
+                    cleaned_data = cleaned_data.rename(
+                        columns=rename_map
+                    )
+
+                    cleaning_applied = True
+                    applied_steps.append("컬럼명 변경")
+
+                    st.success(
+                        f"{len(rename_map)}개 컬럼명을 변경했습니다."
+                    )
+
+                    rename_result = pd.DataFrame({
+                        "기존 컬럼명": list(rename_map.keys()),
+                        "새 컬럼명": list(rename_map.values())
+                    })
+
+                    st.dataframe(
+                        rename_result,
+                        use_container_width=True
+                    )
+
+        else:
+            st.info("변경할 새 컬럼명을 입력하면 적용 옵션이 표시됩니다.")
+
+
+# ------------------------------------------------------------
 # 9. 데이터 타입 변경
 # ------------------------------------------------------------
 # CSV를 읽으면 숫자처럼 보이는 값이 문자로 들어오거나,
@@ -482,6 +565,146 @@ if "데이터 타입 변경" in cleaning_options:
                 pd.DataFrame(failed_columns),
                 use_container_width=True
             )
+
+# ------------------------------------------------------------
+# 날짜 파생변수 생성
+# ------------------------------------------------------------
+# 날짜형 컬럼에서 연도, 월, 요일, 분기, 주말 여부 같은
+# 분석에 자주 쓰이는 파생변수를 생성합니다.
+#
+# 예:
+# 기준일자 → 기준일자_연도
+# 기준일자 → 기준일자_월
+# 기준일자 → 기준일자_요일
+# ------------------------------------------------------------
+if "날짜 파생변수 생성" in cleaning_options:
+    st.subheader("날짜 파생변수 생성")
+
+    datetime_columns = cleaned_data.select_dtypes(
+        include=["datetime", "datetimetz"]
+    ).columns.tolist()
+
+    if not datetime_columns:
+        st.warning(
+            "날짜형 컬럼이 없습니다. 먼저 '데이터 타입 변경'에서 날짜형으로 변환해주세요."
+        )
+
+    else:
+        date_column = st.selectbox(
+            "파생변수를 만들 날짜형 컬럼을 선택하세요",
+            datetime_columns,
+            key="date_derived_column"
+        )
+
+        derived_options = st.multiselect(
+            "생성할 파생변수를 선택하세요",
+            [
+                "연도",
+                "월",
+                "일",
+                "요일",
+                "분기",
+                "주말 여부"
+            ],
+            default=["연도", "월", "요일"],
+            key="date_derived_options"
+        )
+
+        if derived_options:
+            st.write("생성될 컬럼 미리보기")
+
+            preview_columns = []
+
+            if "연도" in derived_options:
+                preview_columns.append(f"{date_column}_연도")
+
+            if "월" in derived_options:
+                preview_columns.append(f"{date_column}_월")
+
+            if "일" in derived_options:
+                preview_columns.append(f"{date_column}_일")
+
+            if "요일" in derived_options:
+                preview_columns.append(f"{date_column}_요일")
+
+            if "분기" in derived_options:
+                preview_columns.append(f"{date_column}_분기")
+
+            if "주말 여부" in derived_options:
+                preview_columns.append(f"{date_column}_주말여부")
+
+            st.dataframe(
+                pd.DataFrame({
+                    "생성 예정 컬럼": preview_columns
+                }),
+                use_container_width=True
+            )
+
+            duplicated_columns = [
+                column for column in preview_columns
+                if column in cleaned_data.columns
+            ]
+
+            if duplicated_columns:
+                st.warning(
+                    f"이미 존재하는 컬럼명이 있습니다: {duplicated_columns}"
+                )
+
+            else:
+                apply_date_features = st.checkbox(
+                    "날짜 파생변수 생성 적용",
+                    key="apply_date_features"
+                )
+
+                if apply_date_features:
+                    if "연도" in derived_options:
+                        cleaned_data[f"{date_column}_연도"] = cleaned_data[date_column].dt.year
+
+                    if "월" in derived_options:
+                        cleaned_data[f"{date_column}_월"] = cleaned_data[date_column].dt.month
+
+                    if "일" in derived_options:
+                        cleaned_data[f"{date_column}_일"] = cleaned_data[date_column].dt.day
+
+                    if "요일" in derived_options:
+                        weekday_map = {
+                            0: "월",
+                            1: "화",
+                            2: "수",
+                            3: "목",
+                            4: "금",
+                            5: "토",
+                            6: "일"
+                        }
+
+                        cleaned_data[f"{date_column}_요일"] = (
+                            cleaned_data[date_column]
+                            .dt.weekday
+                            .map(weekday_map)
+                        )
+
+                    if "분기" in derived_options:
+                        cleaned_data[f"{date_column}_분기"] = (
+                            cleaned_data[date_column].dt.quarter
+                        )
+
+                    if "주말 여부" in derived_options:
+                        cleaned_data[f"{date_column}_주말여부"] = (
+                            cleaned_data[date_column]
+                            .dt.weekday
+                            .isin([5, 6])
+                            .map({
+                                True: "주말",
+                                False: "평일"
+                            })
+                        )
+
+                    cleaning_applied = True
+                    applied_steps.append("날짜 파생변수 생성")
+
+                    st.success(
+                        f"{len(derived_options)}개의 날짜 파생변수를 생성했습니다."
+                    )
 
 # ------------------------------------------------------------
 # 11. 여러 컬럼을 하나로 합치기 (wide → long)
@@ -675,6 +898,20 @@ else:
     for step in applied_steps:
         st.write(f"- {step}")
 
+if cleaning_applied:
+    st.success("정제 작업이 적용되었습니다.")
+
+    if st.button(
+        "정제 데이터를 앱에 저장",
+        type="primary",
+        key="save_cleaned_data_top"
+    ):
+        st.session_state["cleaned_data"] = cleaned_data
+
+        st.success(
+            "정제 데이터가 앱에 저장되었습니다. 이제 시각화와 통계 분석 페이지에서 사용할 수 있습니다."
+        )
+
     # --------------------------------------------------------
     # 12-2. 정제 결과 미리보기
     # --------------------------------------------------------
@@ -777,25 +1014,6 @@ else:
             use_container_width=True,
         )
 
-    # --------------------------------------------------------
-    # 12-7. 정제 데이터 앱에 저장
-    # --------------------------------------------------------
-    # 이 버튼은 파일 다운로드가 아닙니다.
-    # 정제된 데이터를 st.session_state["cleaned_data"]에 저장해서
-    # 시각화 페이지와 통계 분석 페이지에서 사용할 수 있게 합니다.
-    # --------------------------------------------------------
-    st.subheader("정제 데이터 적용")
-
-    st.write(
-        "정제한 데이터를 앱에 저장하면 이후 시각화와 통계 분석 페이지에서 사용할 수 있습니다."
-    )
-
-    if st.button("정제 데이터를 앱에 저장", type="primary"):
-        st.session_state["cleaned_data"] = cleaned_data
-
-        st.success(
-            "정제 데이터가 앱에 저장되었습니다. 이제 시각화와 통계 분석에서 사용할 수 있습니다."
-        )
 
     # --------------------------------------------------------
     # 12-8. 정제 결과 다운로드

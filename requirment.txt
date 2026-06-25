@@ -8,3 +8,6 @@ scipy
 statsmodels
 statannotations
 pingouin
+openpyxl
+xlrd
+pyarrow

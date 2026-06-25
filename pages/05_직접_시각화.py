@@ -24,64 +24,58 @@ if "data" not in st.session_state:
 # ------------------------------------------------------------
 # 시각화에 사용할 데이터 선택
 # ------------------------------------------------------------
-data_options = {
-    "원본 데이터": st.session_state["data"]
-}
-
+# 정제 데이터가 있으면 정제 데이터를 기본값으로 먼저 보여줍니다.
+# 직접 시각화는 사용자가 실제 분석에 쓸 데이터를 보는 화면이므로
+# 원본보다 정제 데이터가 우선되는 편이 자연스럽습니다.
+# ------------------------------------------------------------
 if "cleaned_data" in st.session_state:
-    data_options["정제 데이터"] = st.session_state["cleaned_data"]
+    data_options = {
+        "정제 데이터": st.session_state["cleaned_data"],
+        "원본 데이터": st.session_state["data"],
+    }
+else:
+    data_options = {
+        "원본 데이터": st.session_state["data"],
+    }
+
+st.caption("시각화에 사용할 데이터")
 
 data_source = st.radio(
     "시각화에 사용할 데이터를 선택하세요",
     list(data_options.keys()),
-    horizontal=True
+    horizontal=True,
+    label_visibility="collapsed",
 )
 
 selected_data = data_options[data_source]
 
 
-
 # ------------------------------------------------------------
 # 원본 데이터는 샘플/전체를 선택할 수 있게 합니다.
-# 정제 데이터는 아직 cleaned_sample_data를 만들지 않았기 때문에
-# 일단 정제 데이터 전체를 사용합니다.
+# 정제 데이터는 현재 저장된 정제 데이터 전체를 사용합니다.
 # ------------------------------------------------------------
 if data_source == "원본 데이터" and "sample_data" in st.session_state:
     data_scope = st.radio(
-        "시각화에 사용할 데이터 범위를 선택하세요",
+        "원본 데이터 범위",
         ["빠른 분석용 샘플 데이터", "전체 데이터"],
-        horizontal=True
+        horizontal=True,
     )
 
     if data_scope == "빠른 분석용 샘플 데이터":
         data = st.session_state["sample_data"]
         data_source_name = "원본 데이터 - 샘플"
 
-        st.info(
-            f"현재 {len(data):,}행의 샘플 데이터로 직접 시각화를 생성합니다."
-        )
-
     else:
         data = st.session_state["data"]
         data_source_name = "원본 데이터 - 전체"
-
-        st.warning(
-            f"현재 {len(data):,}행의 전체 데이터로 직접 시각화를 생성합니다. "
-            "데이터가 크면 시간이 오래 걸릴 수 있습니다."
-        )
 
 else:
     data = selected_data
     data_source_name = data_source
 
-    if data_source == "정제 데이터":
-        st.success(
-            f"현재 {len(data):,}행의 정제 데이터로 직접 시각화를 생성합니다."
-        )
-    else:
-        st.info(
-            f"현재 {len(data):,}행의 원본 데이터로 직접 시각화를 생성합니다."
-        )
+st.caption(
+    f"현재 {len(data):,}행의 {data_source_name}로 직접 시각화를 생성합니다."
+)
 
 # ------------------------------------------------------------
 # 직접 시각화에서 제외할 관리용 컬럼 설정
@@ -202,80 +196,79 @@ def choose_single_color(default_color, key_prefix):
 
 
 # ------------------------------------------------------------
-# 5. 현재 데이터 정보
+# 현재 데이터 정보
 # ------------------------------------------------------------
-# 사용자가 어떤 데이터를 보고 있는지 확인할 수 있게 행/열 개수를 보여줍니다.
+# 큰 metric 카드 대신 한 줄 요약으로 보여줘서
+# 그래프 설정 영역까지 내려가는 거리를 줄입니다.
 # ------------------------------------------------------------
-st.subheader("현재 데이터 정보")
-
-info_col1, info_col2 = st.columns(2)
-
-with info_col1:
-    st.metric("행 개수", data.shape[0])
-
-with info_col2:
-    st.metric("열 개수", data.shape[1])
-
+st.caption(
+    f"현재 데이터: {data_source_name} | 행 {data.shape[0]:,}개 | 열 {data.shape[1]:,}개"
+)
 
 # ------------------------------------------------------------
 # 6. 데이터 필터
 # ------------------------------------------------------------
-# 그래프를 그리기 전에 일부 데이터만 골라서 볼 수 있게 합니다.
-# 필터가 적용된 결과는 filtered_data에 저장됩니다.
+# 필터는 필요할 때만 열어보는 보조 기능이므로
+# 기본 상태에서는 접어두어 화면을 더 간결하게 만듭니다.
+# 필터를 적용한 결과는 filtered_data에 저장됩니다.
 # ------------------------------------------------------------
-st.subheader("데이터 필터")
-
 filtered_data = data.copy()
 
-filter_columns = st.multiselect(
-    "필터를 적용할 컬럼",
-    data.columns.tolist(),
-)
+with st.expander("데이터 필터", expanded=False):
+    filter_columns = st.multiselect(
+        "필터를 적용할 컬럼",
+        data.columns.tolist(),
+    )
 
-for column in filter_columns:
-    if pd.api.types.is_numeric_dtype(filtered_data[column]):
-        min_value = float(filtered_data[column].min())
-        max_value = float(filtered_data[column].max())
+    for column in filter_columns:
+        if pd.api.types.is_numeric_dtype(filtered_data[column]):
+            min_value = float(filtered_data[column].min())
+            max_value = float(filtered_data[column].max())
 
-        if min_value == max_value:
-            st.info(f"{column} 컬럼은 모든 값이 같아서 범위 필터를 적용할 수 없습니다.")
-            continue
+            if min_value == max_value:
+                st.info(f"{column} 컬럼은 모든 값이 같아서 범위 필터를 적용할 수 없습니다.")
+                continue
 
-        selected_range = st.slider(
-            f"{column} 범위",
-            min_value=min_value,
-            max_value=max_value,
-            value=(min_value, max_value),
-        )
-
-        filtered_data = filtered_data[
-            filtered_data[column].between(
-                selected_range[0],
-                selected_range[1],
+            selected_range = st.slider(
+                f"{column} 범위",
+                min_value=min_value,
+                max_value=max_value,
+                value=(min_value, max_value),
             )
-        ]
 
-    else:
-        unique_values = (
-            filtered_data[column]
-            .dropna()
-            .astype(str)
-            .unique()
-            .tolist()
-        )
+            filtered_data = filtered_data[
+                filtered_data[column].between(
+                    selected_range[0],
+                    selected_range[1],
+                )
+            ]
 
-        selected_values = st.multiselect(
-            f"{column}에서 포함할 값",
-            unique_values,
-            default=unique_values,
-        )
+        else:
+            unique_values = (
+                filtered_data[column]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
 
-        filtered_data = filtered_data[
-            filtered_data[column].astype(str).isin(selected_values)
-        ]
+            selected_values = st.multiselect(
+                f"{column}에서 포함할 값",
+                unique_values,
+                default=unique_values,
+            )
 
-st.write(
-    f"전체 {len(data):,}행 중 **{len(filtered_data):,}행**이 선택되었습니다."
+            filtered_data = filtered_data[
+                filtered_data[column].astype(str).isin(selected_values)
+            ]
+
+    st.caption(
+        f"전체 {len(data):,}행 중 {len(filtered_data):,}행이 선택되었습니다."
+    )
+
+# 필터가 접혀 있어도 현재 선택 행 수는 화면에서 바로 확인할 수 있게 작게 표시합니다.
+st.caption(
+    f"분석 대상: {len(filtered_data):,}행"
 )
 
 if filtered_data.empty:
@@ -299,14 +292,14 @@ datetime_columns = chart_data.select_dtypes(
 ).columns.tolist()
 
 
-# ------------------------------------------------------------
-# 8. 공통 그래프 설정
-# ------------------------------------------------------------
-# 그래프 종류와 색상 팔레트를 먼저 선택합니다.
-# 이 팔레트는 범례 색상, 막대 색상, 파이 조각 색상 등에 사용됩니다.
-# ------------------------------------------------------------
 st.subheader("시각화 만들기")
 
+# ------------------------------------------------------------
+# 공통 그래프 설정
+# ------------------------------------------------------------
+# 가장 먼저 차트 종류만 선택합니다.
+# 색상 팔레트는 차트별 옵션 흐름에 맞게 아래쪽에서 선택하도록 합니다.
+# ------------------------------------------------------------
 chart_type = st.selectbox(
     "차트 종류",
     [
@@ -328,12 +321,9 @@ chart_type = st.selectbox(
     ],
 )
 
-palette_name = st.selectbox(
-    "색상 팔레트",
-    ["Set2", "Pastel", "Bold", "Dark2", "Plotly", "D3", "G10", "Safe"],
-    index=0,
-)
-
+# 다른 그래프 블록에서 palette_name을 계속 사용하므로 기본값은 유지합니다.
+# 막대그래프처럼 색상 옵션을 따로 둔 차트에서는 아래에서 다시 선택합니다.
+palette_name = "Set2"
 palette_colors = get_color_palette(palette_name)
 
 
@@ -438,22 +428,94 @@ elif chart_type == "막대그래프":
         st.warning("막대그래프의 기준이 될 범주형 컬럼이 없습니다.")
 
     else:
-        x_column = st.selectbox(
-            "막대그래프 기준 컬럼",
-            categorical_columns,
-        )
+        # ----------------------------------------------------
+        # 1) 핵심 설정
+        # ----------------------------------------------------
+        # 막대그래프에서 가장 먼저 정해야 하는 것은
+        # 기준 컬럼과 집계 방식입니다.
+        # ----------------------------------------------------
+        basic_col1, basic_col2 = st.columns(2)
 
-        aggregation_method = st.selectbox(
-            "집계 방식",
-            ["개수", "합계", "평균", "최댓값", "최솟값"],
-        )
+        with basic_col1:
+            x_column = st.selectbox(
+                "막대그래프 기준 컬럼",
+                categorical_columns,
+            )
 
-        use_category_colors = st.checkbox(
-            "막대별 색상 구분",
-            value=True,
-            key="bar_use_category_colors",
-        )
+        with basic_col2:
+            aggregation_method = st.selectbox(
+                "집계 방식",
+                ["개수", "합계", "평균", "최댓값", "최솟값"],
+            )
 
+        if aggregation_method != "개수":
+            if not numeric_columns:
+                st.warning("집계할 숫자형 컬럼이 없습니다.")
+                st.stop()
+
+            y_column = st.selectbox(
+                "집계할 숫자형 컬럼",
+                numeric_columns,
+            )
+
+        # ----------------------------------------------------
+        # 2) 표시 옵션
+        # ----------------------------------------------------
+        # 범주가 많을 때는 Top N으로 줄여서 보고,
+        # 정렬 방식으로 그래프의 읽는 순서를 조정합니다.
+        # ----------------------------------------------------
+        display_col1, display_col2 = st.columns(2)
+
+        with display_col1:
+            top_n_option = st.selectbox(
+                "표시할 범주 수",
+                ["전체", "Top 5", "Top 10", "Top 20", "Top 30"],
+                index=0,
+            )
+
+        with display_col2:
+            sort_option = st.selectbox(
+                "정렬 방식",
+                [
+                    "값 큰 순",
+                    "값 작은 순",
+                    "이름 오름차순",
+                    "이름 내림차순",
+                ],
+                index=0,
+            )
+
+        # ----------------------------------------------------
+        # 3) 색상 옵션
+        # ----------------------------------------------------
+        # 색상은 그래프의 보조 설정이므로
+        # 컬럼과 집계 방식을 정한 뒤에 선택하게 배치합니다.
+        # ----------------------------------------------------
+        color_col1, color_col2 = st.columns(2)
+
+        with color_col1:
+            use_category_colors = st.checkbox(
+                "막대별 색상 구분",
+                value=True,
+                key="bar_use_category_colors",
+            )
+
+        with color_col2:
+            palette_name = st.selectbox(
+                "색상 팔레트",
+                ["Set2", "Pastel", "Bold", "Dark2", "Plotly", "D3", "G10", "Safe"],
+                index=0,
+                key="bar_palette_name",
+            )
+
+        palette_colors = get_color_palette(palette_name)
+
+        # ----------------------------------------------------
+        # 4) 그래프용 데이터 만들기
+        # ----------------------------------------------------
+        # 개수는 value_counts로 계산하고,
+        # 합계/평균/최댓값/최솟값은 groupby 집계로 계산합니다.
+        # ----------------------------------------------------
         if aggregation_method == "개수":
             chart_data = (
                 filtered_data[x_column]
@@ -467,15 +529,6 @@ elif chart_type == "막대그래프":
             y_column = "개수"
 
         else:
-            if not numeric_columns:
-                st.warning("집계할 숫자형 컬럼이 없습니다.")
-                st.stop()
-
-            y_column = st.selectbox(
-                "집계할 숫자형 컬럼",
-                numeric_columns,
-            )
-
             agg_map = {
                 "합계": "sum",
                 "평균": "mean",
@@ -487,11 +540,35 @@ elif chart_type == "막대그래프":
                 filtered_data
                 .groupby(x_column, dropna=False, as_index=False)[y_column]
                 .agg(agg_map[aggregation_method])
-                .sort_values(y_column, ascending=False)
             )
 
-            chart_data[x_column] = chart_data[x_column].astype(str)
+            chart_data[x_column] = chart_data[x_column].fillna("결측치").astype(str)
 
+        # ----------------------------------------------------
+        # 5) 정렬 적용
+        # ----------------------------------------------------
+        if sort_option == "값 큰 순":
+            chart_data = chart_data.sort_values(y_column, ascending=False)
+
+        elif sort_option == "값 작은 순":
+            chart_data = chart_data.sort_values(y_column, ascending=True)
+
+        elif sort_option == "이름 오름차순":
+            chart_data = chart_data.sort_values(x_column, ascending=True)
+
+        elif sort_option == "이름 내림차순":
+            chart_data = chart_data.sort_values(x_column, ascending=False)
+
+        # ----------------------------------------------------
+        # 6) Top N 적용
+        # ----------------------------------------------------
+        if top_n_option != "전체":
+            top_n = int(top_n_option.replace("Top ", ""))
+            chart_data = chart_data.head(top_n)
+
+        # ----------------------------------------------------
+        # 7) 그래프 생성
+        # ----------------------------------------------------
         if use_category_colors:
             color_map = make_color_map(
                 chart_data,
@@ -523,7 +600,64 @@ elif chart_type == "막대그래프":
 
             fig.update_traces(marker_color=selected_color)
 
+        # ----------------------------------------------------
+        # 정렬된 순서가 그래프에도 그대로 보이게 합니다.
+        # ----------------------------------------------------
+        fig.update_layout(
+            xaxis={
+                "categoryorder": "array",
+                "categoryarray": chart_data[x_column].tolist(),
+            }
+        )
+
         st.plotly_chart(fig, use_container_width=True)
+
+        # ----------------------------------------------------
+        # 막대그래프 해석 요약
+        # ----------------------------------------------------
+        # 현재 화면에 표시된 chart_data를 기준으로
+        # 최댓값/최솟값과 동률 여부를 간단히 설명합니다.
+        # 값이 모두 같은 경우에는 비교 차이가 없다는 문구를 보여줍니다.
+        # ----------------------------------------------------
+        if not chart_data.empty:
+            max_value = chart_data[y_column].max()
+            min_value = chart_data[y_column].min()
+
+            max_categories = (
+                chart_data.loc[chart_data[y_column] == max_value, x_column]
+                .astype(str)
+                .tolist()
+            )
+
+            min_categories = (
+                chart_data.loc[chart_data[y_column] == min_value, x_column]
+                .astype(str)
+                .tolist()
+            )
+
+            if max_value == min_value:
+                summary_text = (
+                    f"요약: 현재 표시된 {len(chart_data):,}개 범주의 "
+                    f"{y_column} 값이 모두 동일합니다({max_value:,.2f})."
+                )
+
+            else:
+                max_category_text = ", ".join(max_categories[:3])
+                min_category_text = ", ".join(min_categories[:3])
+
+                if len(max_categories) > 3:
+                    max_category_text += f" 외 {len(max_categories) - 3}개"
+
+                if len(min_categories) > 3:
+                    min_category_text += f" 외 {len(min_categories) - 3}개"
+
+                summary_text = (
+                    f"요약: 현재 표시된 {len(chart_data):,}개 범주 중 "
+                    f"{max_category_text}의 {y_column} 값이 가장 크고({max_value:,.2f}), "
+                    f"{min_category_text}의 {y_column} 값이 가장 작습니다({min_value:,.2f})."
+                )
+
+            st.markdown(f"**{summary_text}**")
 
 
 # ------------------------------------------------------------

@@ -302,23 +302,23 @@ st.subheader("시각화 만들기")
 # ------------------------------------------------------------
 chart_type = st.selectbox(
     "차트 종류",
-    [
-        "히스토그램",
-        "KDE 플롯",
-        "막대그래프",
-        "지도",
-        "산점도",
-        "회귀선 산점도",
-        "선그래프",
-        "박스플롯",
-        "바이올린 플롯",
-        "상관관계 히트맵",
-        "Pair Plot",
-        "파이 차트",
-        "도넛 차트",
-        "누적 막대그래프",
-        "카운트 플롯"
-    ],
+[
+    "히스토그램",
+    "막대그래프",
+    "산점도",
+    "LM Plot",
+    "박스플롯",
+    "상관관계 히트맵",
+    "선그래프",
+    "KDE 플롯",
+    "바이올린 플롯",
+    "카운트 플롯",
+    "Pair Plot",
+    "누적 막대그래프",
+    "파이 차트",
+    "도넛 차트",
+    "지도",
+],
 )
 
 # 다른 그래프 블록에서 palette_name을 계속 사용하므로 기본값은 유지합니다.
@@ -376,6 +376,52 @@ if chart_type == "히스토그램":
             )
 
         st.plotly_chart(fig, use_container_width=True)
+        histogram_values = filtered_data[selected_column].dropna()
+        
+
+        if histogram_values.empty:
+            st.markdown(
+                "**요약: 선택한 컬럼에 계산 가능한 숫자 값이 없습니다.**"
+            )
+
+        else:
+            mean_value = histogram_values.mean()
+            median_value = histogram_values.median()
+            min_value = histogram_values.min()
+            max_value = histogram_values.max()
+
+            # ----------------------------------------------------
+            # 왜도와 꼬리 방향 해석
+            # ----------------------------------------------------
+            # 왜도(skewness)가 양수이면 오른쪽 꼬리,
+            # 음수이면 왼쪽 꼬리 형태로 해석합니다.
+            # 표본 수가 너무 적으면 왜도 해석은 생략합니다.
+            # ----------------------------------------------------
+            skew_value = histogram_values.skew()
+
+            if len(histogram_values) < 3 or pd.isna(skew_value):
+                tail_text = "표본 수가 적어 꼬리 방향 해석은 생략합니다"
+            elif skew_value >= 0.5:
+                tail_text = f"분포는 오른쪽 꼬리 형태를 보입니다(왜도 {skew_value:.2f})"
+            elif skew_value <= -0.5:
+                tail_text = f"분포는 왼쪽 꼬리 형태를 보입니다(왜도 {skew_value:.2f})"
+            else:
+                tail_text = f"분포는 대체로 좌우 균형에 가깝습니다(왜도 {skew_value:.2f})"
+
+            if min_value == max_value:
+                st.markdown(
+                    f"**요약: {selected_column}의 값은 모두 동일합니다"
+                    f"({min_value:,.2f}). 결측치를 제외한 데이터는 {len(histogram_values):,}개입니다.**"
+                )
+
+            else:
+                st.markdown(
+                    f"**요약: {selected_column}의 평균은 {mean_value:,.2f}, "
+                    f"중앙값은 {median_value:,.2f}입니다. "
+                    f"값의 범위는 {min_value:,.2f}부터 {max_value:,.2f}까지이며, "
+                    f"결측치를 제외한 데이터는 {len(histogram_values):,}개입니다. "
+                    f"{tail_text}.**"
+                )
 
 
 # ------------------------------------------------------------
@@ -388,34 +434,110 @@ elif chart_type == "KDE 플롯":
         st.warning("KDE 플롯을 만들 숫자형 컬럼이 없습니다.")
 
     else:
-        selected_column = st.selectbox(
+        selected_columns = st.multiselect(
             "분포를 확인할 숫자형 컬럼",
             numeric_columns,
+            default=numeric_columns[:min(3, len(numeric_columns))],
         )
 
-        selected_color = choose_single_color(palette_colors[0], "kde")
-
-        values = filtered_data[selected_column].dropna()
-
-        if values.empty:
-            st.warning("선택한 컬럼에 표시할 값이 없습니다.")
+        if not selected_columns:
+            st.warning("KDE 플롯을 만들 숫자형 컬럼을 1개 이상 선택해주세요.")
 
         else:
-            fig = ff.create_distplot(
-                [values],
-                [selected_column],
-                show_hist=False,
-                show_rug=False,
-                colors=[selected_color],
-            )
+            kde_values = []
+            kde_labels = []
+            skipped_columns = []
 
-            fig.update_layout(
-                title=f"{selected_column} KDE 플롯",
-                xaxis_title=selected_column,
-                yaxis_title="density",
-            )
+            for column in selected_columns:
+                column_values = filtered_data[column].dropna()
 
-            st.plotly_chart(fig, use_container_width=True)
+                # KDE는 분포 곡선을 추정하는 그래프라
+                # 값이 너무 적거나 모두 같으면 해당 컬럼은 제외합니다.
+                if len(column_values) < 3:
+                    skipped_columns.append(f"{column}(값 3개 미만)")
+                    continue
+
+                if column_values.nunique() <= 1:
+                    skipped_columns.append(f"{column}(값이 모두 같음)")
+                    continue
+
+                kde_values.append(column_values)
+                kde_labels.append(column)
+
+            if not kde_values:
+                st.warning(
+                    "KDE 플롯을 그릴 수 있는 숫자형 컬럼이 없습니다. "
+                    "각 컬럼에는 서로 다른 값이 3개 이상 필요합니다."
+                )
+
+            else:
+                fig = ff.create_distplot(
+                    kde_values,
+                    kde_labels,
+                    show_hist=False,
+                    show_rug=False,
+                    colors=palette_colors[:len(kde_values)],
+                )
+
+                fig.update_layout(
+                    title="숫자형 컬럼별 KDE 플롯",
+                    xaxis_title="값",
+                    yaxis_title="density",
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                # ----------------------------------------------------
+                # KDE 플롯 해석 요약
+                # ----------------------------------------------------
+                # 여러 숫자형 컬럼을 한 번에 볼 수 있으므로
+                # 컬럼별 평균, 중앙값, 왜도를 간단한 표로 보여줍니다.
+                # ----------------------------------------------------
+                summary_rows = []
+
+                for column in kde_labels:
+                    column_values = filtered_data[column].dropna()
+                    skew_value = column_values.skew()
+
+                    if len(column_values) < 3 or pd.isna(skew_value):
+                        tail_text = "해석 생략"
+                    elif skew_value >= 0.5:
+                        tail_text = "오른쪽 꼬리"
+                    elif skew_value <= -0.5:
+                        tail_text = "왼쪽 꼬리"
+                    else:
+                        tail_text = "좌우 균형"
+
+                    summary_rows.append(
+                        {
+                            "컬럼": column,
+                            "개수": len(column_values),
+                            "평균": round(column_values.mean(), 2),
+                            "중앙값": round(column_values.median(), 2),
+                            "최솟값": round(column_values.min(), 2),
+                            "최댓값": round(column_values.max(), 2),
+                            "왜도": round(skew_value, 2) if pd.notna(skew_value) else None,
+                            "꼬리 방향": tail_text,
+                        }
+                    )
+
+                summary_df = pd.DataFrame(summary_rows)
+
+                st.markdown(
+                    f"**요약: 선택한 {len(kde_labels):,}개 숫자형 컬럼의 KDE 플롯을 함께 표시했습니다. "
+                    "컬럼별 분포 특성은 아래 표에서 확인할 수 있습니다.**"
+                )
+
+                st.dataframe(
+                    summary_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                if skipped_columns:
+                    st.caption(
+                        "제외된 컬럼: " + ", ".join(skipped_columns)
+                    )
 
 
 # ------------------------------------------------------------
@@ -762,18 +884,72 @@ elif chart_type == "산점도":
                 color_discrete_map=color_map,
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+            #----------------------------------------------------
+            # 산점도 해석 요약
+            # ----------------------------------------------------
+            # 선택한 두 숫자형 컬럼의 상관계수를 계산해서
+            # 양의 관계, 음의 관계, 거의 관계 없음 중 하나로 설명합니다.
+            # X축과 Y축에 같은 컬럼을 선택한 경우도 오류 없이 처리합니다.
+            # ----------------------------------------------------
+            scatter_summary_data = filtered_data[[x_column, y_column]].dropna()
+
+            if len(scatter_summary_data) < 2:
+                st.markdown(
+                    "**요약: 상관관계를 계산하려면 결측치를 제외한 데이터가 2행 이상 필요합니다.**"
+                )
+
+            elif x_column == y_column:
+                st.markdown(
+                    f"**요약: X축과(와) Y축에 같은 컬럼({x_column})이 선택되어 완전한 양의 관계를 보입니다. "
+                    "상관계수는 1.00입니다.**"
+                )
+
+            else:
+                x_values = scatter_summary_data[x_column]
+                y_values = scatter_summary_data[y_column]
+
+                if x_values.nunique() <= 1 or y_values.nunique() <= 1:
+                    st.markdown(
+                        "**요약: 선택한 컬럼 중 하나의 값이 모두 같아서 상관관계를 계산하기 어렵습니다.**"
+                    )
+
+                else:
+                    correlation_value = x_values.corr(y_values)
+                    abs_correlation = abs(correlation_value)
+
+                    if abs_correlation >= 0.7:
+                        strength_text = "강한"
+                    elif abs_correlation >= 0.4:
+                        strength_text = "중간 정도의"
+                    elif abs_correlation >= 0.2:
+                        strength_text = "약한"
+                    else:
+                        strength_text = "거의 없는"
+
+                    if correlation_value > 0:
+                        direction_text = "양의 관계"
+                    elif correlation_value < 0:
+                        direction_text = "음의 관계"
+                    else:
+                        direction_text = "관계"
+
+                    st.markdown(
+                        f"**요약: {x_column}와 {y_column}의 상관계수는 "
+                        f"{correlation_value:.2f}로, {strength_text} {direction_text}를 보입니다.**"
+                    )
 
 
 # ------------------------------------------------------------
-# 14. 회귀선 산점도
+# 14. LM Plot
 # ------------------------------------------------------------
-# 산점도에 회귀선을 함께 표시합니다.
+# 산점도에 LM Plot을 함께 표시합니다.
 # trendline="ols"는 statsmodels 패키지가 필요합니다.
 # ------------------------------------------------------------
-elif chart_type == "회귀선 산점도":
+elif chart_type == "LM Plot":
     if len(numeric_columns) < 2:
-        st.warning("회귀선 산점도를 만들려면 숫자형 컬럼이 2개 이상 필요합니다.")
+        st.warning("LM Plot를 만들려면 숫자형 컬럼이 2개 이상 필요합니다.")
 
     else:
         x_column = st.selectbox(
@@ -801,7 +977,7 @@ elif chart_type == "회귀선 산점도":
                     x=x_column,
                     y=y_column,
                     trendline="ols",
-                    title=f"{x_column}와 {y_column}의 관계와 회귀선",
+                    title=f"{x_column}와 {y_column}의 LM Plot",
                     color_discrete_sequence=[selected_color],
                 )
 
@@ -821,7 +997,7 @@ elif chart_type == "회귀선 산점도":
                     y=y_column,
                     color=color_column,
                     trendline="ols",
-                    title=f"{x_column}와 {y_column}의 관계와 회귀선",
+                    title=f"{x_column}와 {y_column}의 LM Plot",
                     color_discrete_sequence=palette_colors,
                     color_discrete_map=color_map,
                 )
@@ -829,7 +1005,7 @@ elif chart_type == "회귀선 산점도":
             st.plotly_chart(fig, use_container_width=True)
 
         except ModuleNotFoundError:
-            st.error("회귀선을 그리려면 statsmodels 패키지가 필요합니다.")
+            st.error("LM Plot을 그리려면 statsmodels 패키지가 필요합니다.")
             st.code(".\\.venv\\Scripts\\python.exe -m pip install statsmodels")
 
 
@@ -1007,6 +1183,80 @@ elif chart_type == "박스플롯":
             )
 
         st.plotly_chart(fig, use_container_width=True)
+        # ----------------------------------------------------
+        # 박스플롯 해석 요약
+        # ----------------------------------------------------
+        # 그룹 컬럼이 없으면 전체 숫자형 컬럼의 분포를 요약합니다.
+        # 그룹 컬럼이 있으면 그룹별 중앙값을 비교합니다.
+        # ----------------------------------------------------
+        if x_column not in filtered_data.columns:
+            box_values = filtered_data[y_column].dropna()
+
+            if box_values.empty:
+                st.markdown(
+                    "**요약: 선택한 숫자형 컬럼에 계산 가능한 값이 없습니다.**"
+                )
+
+            else:
+                median_value = box_values.median()
+                min_value = box_values.min()
+                max_value = box_values.max()
+
+                st.markdown(
+                    f"**요약: {y_column}의 중앙값은 {median_value:,.2f}이며, "
+                    f"값의 범위는 {min_value:,.2f}부터 {max_value:,.2f}까지입니다.**"
+                )
+
+        else:
+            group_summary = (
+                filtered_data
+                .dropna(subset=[x_column, y_column])
+                .groupby(x_column)[y_column]
+                .median()
+                .reset_index()
+            )
+
+            if group_summary.empty:
+                st.markdown(
+                    "**요약: 그룹별 중앙값을 계산할 수 있는 데이터가 없습니다.**"
+                )
+
+            else:
+                max_median = group_summary[y_column].max()
+                min_median = group_summary[y_column].min()
+
+                max_groups = (
+                    group_summary.loc[group_summary[y_column] == max_median, x_column]
+                    .astype(str)
+                    .tolist()
+                )
+
+                min_groups = (
+                    group_summary.loc[group_summary[y_column] == min_median, x_column]
+                    .astype(str)
+                    .tolist()
+                )
+
+                if max_median == min_median:
+                    st.markdown(
+                        f"**요약: 모든 그룹의 {y_column} 중앙값이 동일합니다({max_median:,.2f}).**"
+                    )
+
+                else:
+                    max_group_text = ", ".join(max_groups[:3])
+                    min_group_text = ", ".join(min_groups[:3])
+
+                    if len(max_groups) > 3:
+                        max_group_text += f" 외 {len(max_groups) - 3}개"
+
+                    if len(min_groups) > 3:
+                        min_group_text += f" 외 {len(min_groups) - 3}개"
+
+                    st.markdown(
+                        f"**요약: {max_group_text}의 {y_column} 중앙값이 가장 높고"
+                        f"({max_median:,.2f}), {min_group_text}의 중앙값이 가장 낮습니다"
+                        f"({min_median:,.2f}).**"
+                    )
 
 
 # ------------------------------------------------------------
@@ -1115,6 +1365,71 @@ elif chart_type == "상관관계 히트맵":
             )
 
             st.plotly_chart(fig, use_container_width=True)
+                        # ----------------------------------------------------
+            # 상관관계 히트맵 해석 요약
+            # ----------------------------------------------------
+            # 자기 자신과의 상관관계는 항상 1이므로 제외하고,
+            # 서로 다른 컬럼 조합 중 가장 강한 양의 상관관계와
+            # 가장 강한 음의 상관관계를 찾아 보여줍니다.
+            # ----------------------------------------------------
+            pair_rows = []
+
+            for i, column1 in enumerate(correlation.columns):
+                for column2 in correlation.columns[i + 1:]:
+                    corr_value = correlation.loc[column1, column2]
+
+                    if pd.notna(corr_value):
+                        pair_rows.append(
+                            {
+                                "컬럼1": column1,
+                                "컬럼2": column2,
+                                "상관계수": corr_value,
+                            }
+                        )
+
+            pair_data = pd.DataFrame(pair_rows)
+
+            summary_messages = [
+                f"요약: 선택한 {len(selected_columns):,}개 숫자형 컬럼의 상관관계를 확인했습니다."
+            ]
+
+            if pair_data.empty:
+                summary_messages.append(
+                    "계산 가능한 컬럼 조합이 부족해서 가장 강한 상관관계를 찾기 어렵습니다."
+                )
+
+            else:
+                positive_pairs = pair_data[pair_data["상관계수"] > 0]
+                negative_pairs = pair_data[pair_data["상관계수"] < 0]
+
+                if not positive_pairs.empty:
+                    strongest_positive = positive_pairs.loc[
+                        positive_pairs["상관계수"].idxmax()
+                    ]
+
+                    summary_messages.append(
+                        f"가장 강한 양의 상관관계는 "
+                        f"{strongest_positive['컬럼1']}와 {strongest_positive['컬럼2']} "
+                        f"사이에서 나타났습니다({strongest_positive['상관계수']:.2f})."
+                    )
+
+                if not negative_pairs.empty:
+                    strongest_negative = negative_pairs.loc[
+                        negative_pairs["상관계수"].idxmin()
+                    ]
+
+                    summary_messages.append(
+                        f"가장 강한 음의 상관관계는 "
+                        f"{strongest_negative['컬럼1']}와 {strongest_negative['컬럼2']} "
+                        f"사이에서 나타났습니다({strongest_negative['상관계수']:.2f})."
+                    )
+
+                if positive_pairs.empty and negative_pairs.empty:
+                    summary_messages.append(
+                        "서로 다른 컬럼 간 뚜렷한 양의/음의 상관관계가 확인되지 않았습니다."
+                    )
+
+            st.markdown("**" + " ".join(summary_messages) + "**")
 
 
 # ------------------------------------------------------------

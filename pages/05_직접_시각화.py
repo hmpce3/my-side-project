@@ -3,6 +3,24 @@ import pandas as pd
 import plotly.express as px
 import plotly.figure_factory as ff
 from helpers import my_plot
+from helpers import my_report
+
+
+# 그린 차트와 그 아래 표시되는 요약 인사이트를 보고서 담기용으로 함께 수집합니다.
+_page_charts = []
+
+
+def _show(fig):
+    st.plotly_chart(fig, use_container_width=True, key=f"viz_chart_{len(_page_charts)}")
+    _page_charts.append({"fig": fig, "insight": ""})
+
+
+def _insight(md):
+    """차트 아래 요약 인사이트를 표시하고, 직전 차트에 함께 저장합니다."""
+    st.markdown(md)
+    if _page_charts:
+        # 보고서에는 ** 강조 기호 없이 저장합니다.
+        _page_charts[-1]["insight"] = str(md).replace("**", "").strip()
 
 
 # ------------------------------------------------------------
@@ -375,12 +393,12 @@ if chart_type == "히스토그램":
                 color_discrete_map=color_map,
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
         histogram_values = filtered_data[selected_column].dropna()
         
 
         if histogram_values.empty:
-            st.markdown(
+            _insight(
                 "**요약: 선택한 컬럼에 계산 가능한 숫자 값이 없습니다.**"
             )
 
@@ -409,13 +427,13 @@ if chart_type == "히스토그램":
                 tail_text = f"분포는 대체로 좌우 균형에 가깝습니다(왜도 {skew_value:.2f})"
 
             if min_value == max_value:
-                st.markdown(
+                _insight(
                     f"**요약: {selected_column}의 값은 모두 동일합니다"
                     f"({min_value:,.2f}). 결측치를 제외한 데이터는 {len(histogram_values):,}개입니다.**"
                 )
 
             else:
-                st.markdown(
+                _insight(
                     f"**요약: {selected_column}의 평균은 {mean_value:,.2f}, "
                     f"중앙값은 {median_value:,.2f}입니다. "
                     f"값의 범위는 {min_value:,.2f}부터 {max_value:,.2f}까지이며, "
@@ -485,7 +503,7 @@ elif chart_type == "KDE 플롯":
                     yaxis_title="density",
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                _show(fig)
 
                 # ----------------------------------------------------
                 # KDE 플롯 해석 요약
@@ -523,7 +541,7 @@ elif chart_type == "KDE 플롯":
 
                 summary_df = pd.DataFrame(summary_rows)
 
-                st.markdown(
+                _insight(
                     f"**요약: 선택한 {len(kde_labels):,}개 숫자형 컬럼의 KDE 플롯을 함께 표시했습니다. "
                     "컬럼별 분포 특성은 아래 표에서 확인할 수 있습니다.**"
                 )
@@ -732,7 +750,7 @@ elif chart_type == "막대그래프":
             }
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
         # ----------------------------------------------------
         # 막대그래프 해석 요약
@@ -779,7 +797,7 @@ elif chart_type == "막대그래프":
                     f"{min_category_text}의 {y_column} 값이 가장 작습니다({min_value:,.2f})."
                 )
 
-            st.markdown(f"**{summary_text}**")
+            _insight(f"**{summary_text}**")
 
 
 # ------------------------------------------------------------
@@ -823,7 +841,7 @@ elif chart_type == "카운트 플롯":
             color_discrete_map=color_map,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 
 # ------------------------------------------------------------
@@ -884,61 +902,62 @@ elif chart_type == "산점도":
                 color_discrete_map=color_map,
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+        # 색상 선택 여부와 상관없이 그래프를 그리고 요약을 표시합니다.
+        _show(fig)
 
-            #----------------------------------------------------
-            # 산점도 해석 요약
-            # ----------------------------------------------------
-            # 선택한 두 숫자형 컬럼의 상관계수를 계산해서
-            # 양의 관계, 음의 관계, 거의 관계 없음 중 하나로 설명합니다.
-            # X축과 Y축에 같은 컬럼을 선택한 경우도 오류 없이 처리합니다.
-            # ----------------------------------------------------
-            scatter_summary_data = filtered_data[[x_column, y_column]].dropna()
+        #----------------------------------------------------
+        # 산점도 해석 요약
+        # ----------------------------------------------------
+        # 선택한 두 숫자형 컬럼의 상관계수를 계산해서
+        # 양의 관계, 음의 관계, 거의 관계 없음 중 하나로 설명합니다.
+        # X축과 Y축에 같은 컬럼을 선택한 경우도 오류 없이 처리합니다.
+        # ----------------------------------------------------
+        scatter_summary_data = filtered_data[[x_column, y_column]].dropna()
 
-            if len(scatter_summary_data) < 2:
-                st.markdown(
-                    "**요약: 상관관계를 계산하려면 결측치를 제외한 데이터가 2행 이상 필요합니다.**"
-                )
+        if len(scatter_summary_data) < 2:
+            _insight(
+                "**요약: 상관관계를 계산하려면 결측치를 제외한 데이터가 2행 이상 필요합니다.**"
+            )
 
-            elif x_column == y_column:
-                st.markdown(
-                    f"**요약: X축과(와) Y축에 같은 컬럼({x_column})이 선택되어 완전한 양의 관계를 보입니다. "
-                    "상관계수는 1.00입니다.**"
+        elif x_column == y_column:
+            _insight(
+                f"**요약: X축과(와) Y축에 같은 컬럼({x_column})이 선택되어 완전한 양의 관계를 보입니다. "
+                "상관계수는 1.00입니다.**"
+            )
+
+        else:
+            x_values = scatter_summary_data[x_column]
+            y_values = scatter_summary_data[y_column]
+
+            if x_values.nunique() <= 1 or y_values.nunique() <= 1:
+                _insight(
+                    "**요약: 선택한 컬럼 중 하나의 값이 모두 같아서 상관관계를 계산하기 어렵습니다.**"
                 )
 
             else:
-                x_values = scatter_summary_data[x_column]
-                y_values = scatter_summary_data[y_column]
+                correlation_value = x_values.corr(y_values)
+                abs_correlation = abs(correlation_value)
 
-                if x_values.nunique() <= 1 or y_values.nunique() <= 1:
-                    st.markdown(
-                        "**요약: 선택한 컬럼 중 하나의 값이 모두 같아서 상관관계를 계산하기 어렵습니다.**"
-                    )
-
+                if abs_correlation >= 0.7:
+                    strength_text = "강한"
+                elif abs_correlation >= 0.4:
+                    strength_text = "중간 정도의"
+                elif abs_correlation >= 0.2:
+                    strength_text = "약한"
                 else:
-                    correlation_value = x_values.corr(y_values)
-                    abs_correlation = abs(correlation_value)
+                    strength_text = "거의 없는"
 
-                    if abs_correlation >= 0.7:
-                        strength_text = "강한"
-                    elif abs_correlation >= 0.4:
-                        strength_text = "중간 정도의"
-                    elif abs_correlation >= 0.2:
-                        strength_text = "약한"
-                    else:
-                        strength_text = "거의 없는"
+                if correlation_value > 0:
+                    direction_text = "양의 관계"
+                elif correlation_value < 0:
+                    direction_text = "음의 관계"
+                else:
+                    direction_text = "관계"
 
-                    if correlation_value > 0:
-                        direction_text = "양의 관계"
-                    elif correlation_value < 0:
-                        direction_text = "음의 관계"
-                    else:
-                        direction_text = "관계"
-
-                    st.markdown(
-                        f"**요약: {x_column}와 {y_column}의 상관계수는 "
-                        f"{correlation_value:.2f}로, {strength_text} {direction_text}를 보입니다.**"
-                    )
+                _insight(
+                    f"**요약: {x_column}와 {y_column}의 상관계수는 "
+                    f"{correlation_value:.2f}로, {strength_text} {direction_text}를 보입니다.**"
+                )
 
 
 # ------------------------------------------------------------
@@ -1002,7 +1021,7 @@ elif chart_type == "LM Plot":
                     color_discrete_map=color_map,
                 )
 
-            st.plotly_chart(fig, use_container_width=True)
+            _show(fig)
 
         except ModuleNotFoundError:
             st.error("LM Plot을 그리려면 statsmodels 패키지가 필요합니다.")
@@ -1126,7 +1145,7 @@ elif chart_type == "선그래프":
             color_map
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 
 # ------------------------------------------------------------
@@ -1182,7 +1201,7 @@ elif chart_type == "박스플롯":
                 color_discrete_map=color_map,
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
         # ----------------------------------------------------
         # 박스플롯 해석 요약
         # ----------------------------------------------------
@@ -1193,7 +1212,7 @@ elif chart_type == "박스플롯":
             box_values = filtered_data[y_column].dropna()
 
             if box_values.empty:
-                st.markdown(
+                _insight(
                     "**요약: 선택한 숫자형 컬럼에 계산 가능한 값이 없습니다.**"
                 )
 
@@ -1202,7 +1221,7 @@ elif chart_type == "박스플롯":
                 min_value = box_values.min()
                 max_value = box_values.max()
 
-                st.markdown(
+                _insight(
                     f"**요약: {y_column}의 중앙값은 {median_value:,.2f}이며, "
                     f"값의 범위는 {min_value:,.2f}부터 {max_value:,.2f}까지입니다.**"
                 )
@@ -1217,7 +1236,7 @@ elif chart_type == "박스플롯":
             )
 
             if group_summary.empty:
-                st.markdown(
+                _insight(
                     "**요약: 그룹별 중앙값을 계산할 수 있는 데이터가 없습니다.**"
                 )
 
@@ -1238,7 +1257,7 @@ elif chart_type == "박스플롯":
                 )
 
                 if max_median == min_median:
-                    st.markdown(
+                    _insight(
                         f"**요약: 모든 그룹의 {y_column} 중앙값이 동일합니다({max_median:,.2f}).**"
                     )
 
@@ -1252,7 +1271,7 @@ elif chart_type == "박스플롯":
                     if len(min_groups) > 3:
                         min_group_text += f" 외 {len(min_groups) - 3}개"
 
-                    st.markdown(
+                    _insight(
                         f"**요약: {max_group_text}의 {y_column} 중앙값이 가장 높고"
                         f"({max_median:,.2f}), {min_group_text}의 중앙값이 가장 낮습니다"
                         f"({min_median:,.2f}).**"
@@ -1324,7 +1343,7 @@ elif chart_type == "바이올린 플롯":
                 color_discrete_map=color_map,
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 
 # ------------------------------------------------------------
@@ -1364,7 +1383,7 @@ elif chart_type == "상관관계 히트맵":
                 aspect="auto",
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            _show(fig)
                         # ----------------------------------------------------
             # 상관관계 히트맵 해석 요약
             # ----------------------------------------------------
@@ -1429,7 +1448,7 @@ elif chart_type == "상관관계 히트맵":
                         "서로 다른 컬럼 간 뚜렷한 양의/음의 상관관계가 확인되지 않았습니다."
                     )
 
-            st.markdown("**" + " ".join(summary_messages) + "**")
+            _insight("**" + " ".join(summary_messages) + "**")
 
 
 # ------------------------------------------------------------
@@ -1488,7 +1507,7 @@ elif chart_type == "Pair Plot":
 
             fig.update_traces(diagonal_visible=False)
 
-            st.plotly_chart(fig, use_container_width=True)
+            _show(fig)
 
 
 # ------------------------------------------------------------
@@ -1533,7 +1552,7 @@ elif chart_type == "파이 차트":
             color_discrete_map=color_map,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 
 # ------------------------------------------------------------
@@ -1579,7 +1598,7 @@ elif chart_type == "도넛 차트":
             color_discrete_map=color_map,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 
 # ------------------------------------------------------------
@@ -1652,7 +1671,7 @@ elif chart_type == "누적 막대그래프":
             color_discrete_map=color_map,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
 elif chart_type == "지도":
     st.write("위도와 경도 컬럼을 이용해 지도 위에 데이터를 표시합니다.")
@@ -1738,4 +1757,23 @@ elif chart_type == "지도":
             palette_name
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
+
+
+# ------------------------------------------------------------
+# 보고서에 담기
+# ------------------------------------------------------------
+if _page_charts:
+    st.divider()
+    st.subheader("보고서")
+
+    if st.button("📌 이 그래프를 리포트에 담기", key="add_viz_chart"):
+        for chart in _page_charts:
+            my_report.add_item(
+                "chart",
+                my_report.chart_title(chart["fig"], chart_type),
+                "직접 시각화",
+                chart["fig"],
+                caption=chart["insight"],
+            )
+        st.toast("그래프를 리포트에 담았습니다.")

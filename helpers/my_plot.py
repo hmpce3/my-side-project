@@ -1,10 +1,39 @@
-from matplotlib import pyplot as plt
-import seaborn as sb
 import numpy as np
 from pandas import pivot_table
-from scipy.spatial import ConvexHull
-from . import my_stats
 import plotly.express as px
+
+
+# ------------------------------------------------------------
+# 무거운 라이브러리 지연 로딩 (앱 시작 속도 개선)
+# 아래쪽 matplotlib/seaborn 함수들은 수업/정적 그래프용이고,
+# Streamlit 앱은 Plotly 기반 make_* 함수만 사용합니다.
+# 그래서 matplotlib/seaborn은 실제로 그 함수가 호출되는 순간에만 import합니다.
+# ------------------------------------------------------------
+class _LazyModule:
+    """속성에 처음 접근할 때 모듈을 import하는 지연 로더."""
+
+    def __init__(self, module_name, on_load=None):
+        self._module_name = module_name
+        self._module = None
+        self._on_load = on_load
+
+    def __getattr__(self, attr):
+        if self._module is None:
+            import importlib
+            self._module = importlib.import_module(self._module_name)
+            if self._on_load is not None:
+                self._on_load()
+        return getattr(self._module, attr)
+
+
+def _apply_korean_font():
+    """matplotlib/seaborn이 처음 로드되는 순간 한글 폰트 설정을 적용합니다."""
+    from . import setup_korean_font
+    setup_korean_font()
+
+
+plt = _LazyModule("matplotlib.pyplot", on_load=_apply_korean_font)
+sb = _LazyModule("seaborn", on_load=_apply_korean_font)
 
 #----------------------------------------------------------
 
@@ -139,6 +168,9 @@ def kdeplot(data=None, x=None, hue=None, meanline=False, clevel=0,
         height: 캔버스 세로 픽셀.
         save_path: 이미지 저장 경로.
     """
+
+    # my_stats는 이 함수에서만 쓰므로 지연 import (앱 시작 시 통계 라이브러리 로딩 방지)
+    from . import my_stats
 
     # 그래프 초기화
     fig = None
@@ -646,6 +678,8 @@ def plot_hull(data, x, y, hue, palette, ax):
         palette: 색상 팔레트 이름
         ax: ConvexHull로 외곽선을 그릴 Axes 객체
     """
+
+    from scipy.spatial import ConvexHull
 
     # 데이터의 군집 종류 얻기
     classes = list(data[hue].unique())

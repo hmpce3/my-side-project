@@ -1,15 +1,7 @@
 import streamlit as st
 import pandas as pd
-import importlib
 
 from helpers import my_data
-
-# ------------------------------------------------------------
-# 개발 중에는 helpers/my_data.py를 수정한 뒤에도
-# Streamlit이 이전 코드를 기억하는 경우가 있습니다.
-# 그래서 reload를 사용해서 최신 코드가 반영되도록 합니다.
-# ------------------------------------------------------------
-importlib.reload(my_data)
 
 
 st.title("데이터 품질 점검")

@@ -1,12 +1,9 @@
 import streamlit as st
 import pandas as pd
-import importlib
 
 from helpers import my_stats
 from helpers import my_plot
-
-importlib.reload(my_stats)
-importlib.reload(my_plot)
+from helpers import my_report
 
 def get_first_p_value(result_df):
     """
@@ -142,7 +139,8 @@ test_type = st.selectbox(
         "대응표본 T-TEST",
         "독립표본 T-TEST",
         "일원분산분석 ANOVA",
-        "상관분석"
+        "상관분석",
+        "교차분석 (카이제곱)"
     ]
 )
 
@@ -230,6 +228,12 @@ if test_type == "단일표본 T-TEST":
             )
 
             st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 단일표본 T-TEST",
+            "table": test_result,
+            "text": interpretation if p_value is not None else "",
+        }
 
 
 # ------------------------------------------------------------
@@ -330,6 +334,12 @@ elif test_type == "대응표본 T-TEST":
             )
 
             st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 대응표본 T-TEST",
+            "table": test_result,
+            "text": interpretation if p_value is not None else "",
+        }
 
 
 # ------------------------------------------------------------
@@ -470,6 +480,12 @@ elif test_type == "독립표본 T-TEST":
             )
 
             st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 독립표본 T-TEST",
+            "table": test_result,
+            "text": interpretation if p_value is not None else "",
+        }
 
 
 # ------------------------------------------------------------
@@ -706,6 +722,12 @@ elif test_type == "일원분산분석 ANOVA":
 
         st.info(interpretation_text)
 
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 일원분산분석 ANOVA",
+            "table": test_result_display,
+            "text": interpretation_text,
+        }
+
         # ------------------------------------------------------------
         # 10) 사후검정
         # ------------------------------------------------------------
@@ -869,7 +891,7 @@ elif test_type == "상관분석":
 
         st.subheader("결과 해석")
 
-        st.info(
+        correlation_summary = (
             f"{method} 상관분석 결과, 상관계수는 {coef:.3f}입니다. "
             f"상관의 방향은 {direction_text}이며, 강도는 {strength}입니다.\n\n"
             f"{relation_text}\n\n"
@@ -877,3 +899,103 @@ elif test_type == "상관분석":
             "단, 상관분석은 두 변수가 함께 움직이는 정도를 확인하는 방법이며 "
             "원인과 결과를 의미하지는 않습니다."
         )
+
+        st.info(correlation_summary)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 상관분석",
+            "table": result_display,
+            "text": correlation_summary,
+        }
+
+
+# ------------------------------------------------------------
+# 11. 교차분석 (카이제곱 독립성 검정)
+# ------------------------------------------------------------
+# 목적:
+# 두 범주형 변수가 서로 관계가 있는지(독립이 아닌지) 확인합니다.
+#
+# 예:
+# - 성별과 구매여부는 관계가 있는가?
+# - 지역과 이탈여부는 관계가 있는가?
+# - 요일과 불량여부는 관계가 있는가?
+# ------------------------------------------------------------
+elif test_type == "교차분석 (카이제곱)":
+    st.subheader("교차분석 (카이제곱 독립성 검정)")
+
+    if len(categorical_columns) < 2:
+        st.warning("교차분석을 하려면 범주형 컬럼이 2개 이상 필요합니다.")
+        st.stop()
+
+    cross_col1, cross_col2 = st.columns(2)
+
+    with cross_col1:
+        row_column = st.selectbox(
+            "행 컬럼 (범주형)",
+            categorical_columns,
+            key="chi_row_column",
+        )
+
+    with cross_col2:
+        col_column = st.selectbox(
+            "열 컬럼 (범주형)",
+            categorical_columns,
+            index=1 if len(categorical_columns) > 1 else 0,
+            key="chi_col_column",
+        )
+
+    st.info(
+        "카이제곱 독립성 검정은 두 범주형 변수가 서로 관계가 있는지(독립이 아닌지) 확인합니다. "
+        "숫자형 변수가 주인공인 t-검정·분산분석과 달리, 범주 ↔ 범주 관계를 봅니다."
+    )
+
+    st.write(f"""
+    **귀무가설(H0)**: `{row_column}`와(과) `{col_column}`는 서로 관계가 없다(독립).
+    **대립가설(H1)**: 두 변수는 서로 관계가 있다.
+    """)
+
+    if row_column == col_column:
+        st.warning("서로 다른 두 범주형 컬럼을 선택해주세요.")
+
+    elif st.button("교차분석 실행"):
+        observed, chi_result, chi_interpretation = my_stats.crosstab_chi2_for_app(
+            stats_data,
+            row_column,
+            col_column,
+            alpha=alpha,
+        )
+
+        st.subheader("교차표 (관측빈도)")
+        st.caption("각 범주 조합에 실제로 몇 건이 있는지 보여줍니다.")
+        st.dataframe(observed, use_container_width=True)
+
+        st.subheader("검정 결과")
+        st.dataframe(chi_result, use_container_width=True)
+
+        st.subheader("결과 해석")
+        st.info(chi_interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": f"통계 분석 - 교차분석 ({row_column} × {col_column})",
+            "table": observed.reset_index(),
+            "text": chi_interpretation,
+        }
+
+
+# ============================================================
+# 보고서에 담기 (마지막으로 실행한 검정 결과)
+# ============================================================
+_stat_candidate = st.session_state.get("stat_candidate")
+
+if _stat_candidate:
+    st.divider()
+    st.subheader("보고서")
+
+    my_report.report_button(
+        "stat",
+        _stat_candidate["title"],
+        "통계 분석",
+        {"table": _stat_candidate["table"], "text": _stat_candidate["text"]},
+        key="add_stat",
+        label=f"📌 '{_stat_candidate['title']}' 결과 리포트에 담기",
+    )

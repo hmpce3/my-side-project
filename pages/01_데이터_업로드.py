@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
-import importlib
 
 from helpers import my_data
-
-importlib.reload(my_data)
 
 
 st.title("데이터 업로드 / 결합")

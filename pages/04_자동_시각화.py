@@ -1,12 +1,32 @@
 import streamlit as st
 import pandas as pd
-import importlib
 
 from helpers import my_plot
+from helpers import my_report
 
-importlib.reload(my_plot)
+
+# 자동 생성한 차트를 렌더링하면서 보고서 담기용으로 수집합니다.
+_page_figs = []
+
+
+def _show(fig):
+    st.plotly_chart(fig, use_container_width=True, key=f"auto_chart_{len(_page_figs)}")
+    _page_figs.append(fig)
+
+
+# ------------------------------------------------------------
+# 무거운 작업 캐싱
+# 같은 데이터·설정이면 다시 계산/그리지 않고 캐시 결과를 재사용합니다.
+# (자동 시각화 페이지가 매 새로고침마다 차트를 새로 그려 느렸던 부분 해결)
+# ------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def build_chart(chart_type, data, *params):
+    """plotly 차트를 (차트 종류, 데이터, 설정) 기준으로 캐싱합니다."""
+    return getattr(my_plot, chart_type)(data, *params)
+
 
 #=================
+@st.cache_data(show_spinner=False)
 def find_datetime_candidates(data):
     """
     날짜형으로 변환하면 좋을 것 같은 컬럼을 찾습니다.
@@ -411,14 +431,15 @@ if is_long_timeseries:
         "시간에 따라 값이 어떻게 변하는지 확인합니다."
     )
 
-    fig = my_plot.make_line(
+    fig = build_chart(
+        "make_line",
         chart_data,
         date_column,
         value_column,
         category_column
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    _show(fig)
 
     # --------------------------------------------------------
     # 2. 그룹별 분포 박스플롯
@@ -430,13 +451,14 @@ if is_long_timeseries:
         "그룹별 값의 분포와 이상치를 확인합니다."
     )
 
-    fig = my_plot.make_box(
+    fig = build_chart(
+        "make_box",
         chart_data,
         value_column,
         category_column
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    _show(fig)
 
     # --------------------------------------------------------
     # 3. 그룹별 평균 막대그래프
@@ -448,14 +470,15 @@ if is_long_timeseries:
         "그룹별 평균값을 비교합니다."
     )
 
-    fig = my_plot.make_bar_aggregation(
+    fig = build_chart(
+        "make_bar_aggregation",
         chart_data,
         category_column,
         value_column,
         "평균"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    _show(fig)
 
     # --------------------------------------------------------
     # 4. 전체 값 분포 히스토그램
@@ -467,12 +490,13 @@ if is_long_timeseries:
         "전체 값이 어떤 범위에 많이 분포하는지 확인합니다."
     )
 
-    fig = my_plot.make_histogram(
+    fig = build_chart(
+        "make_histogram",
         chart_data,
         value_column
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    _show(fig)
 
 
 # ------------------------------------------------------------
@@ -490,12 +514,13 @@ else:
             "숫자형 값이 어떻게 분포되어 있는지 확인합니다."
         )
 
-        fig = my_plot.make_histogram(
+        fig = build_chart(
+            "make_histogram",
             chart_data,
             best_numeric_column
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
     else:
         st.info("숫자형 컬럼이 없어 히스토그램을 생성하지 않았습니다.")
@@ -511,12 +536,13 @@ else:
             "범주별 데이터 개수를 비교합니다."
         )
 
-        fig = my_plot.make_bar_count(
+        fig = build_chart(
+            "make_bar_count",
             chart_data,
             best_categorical_column
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
     else:
         st.info("적절한 범주형 컬럼이 없어 막대그래프를 생성하지 않았습니다.")
@@ -541,14 +567,15 @@ else:
             "두 숫자형 변수 사이의 관계를 확인합니다."
         )
 
-        fig = my_plot.make_scatter(
+        fig = build_chart(
+            "make_scatter",
             chart_data,
             x_column,
             y_column,
             best_color_column
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
     else:
         st.info("숫자형 컬럼이 2개 미만이라 산점도를 생성하지 않았습니다.")
@@ -570,12 +597,13 @@ else:
             "숫자형 변수들 사이의 상관관계를 확인합니다."
         )
 
-        fig = my_plot.make_correlation_heatmap(
+        fig = build_chart(
+            "make_correlation_heatmap",
             chart_data,
             heatmap_columns
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
     else:
         st.info("숫자형 컬럼이 2개 미만이라 상관관계 히트맵을 생성하지 않았습니다.")
@@ -591,13 +619,36 @@ else:
             "그룹별 분포와 이상치를 확인합니다."
         )
 
-        fig = my_plot.make_box(
+        fig = build_chart(
+            "make_box",
             chart_data,
             best_numeric_column,
             best_categorical_column
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        _show(fig)
 
     else:
         st.info("숫자형 컬럼과 적절한 범주형 컬럼이 부족해 박스플롯을 생성하지 않았습니다.")
+
+
+# ------------------------------------------------------------
+# 보고서에 담기
+# ------------------------------------------------------------
+if _page_figs:
+    st.divider()
+    st.subheader("보고서")
+    st.caption("이 페이지에서 자동 생성된 그래프를 보고서에 담을 수 있습니다.")
+
+    if st.button(
+        f"📊 자동 생성 그래프 {len(_page_figs)}개 모두 리포트에 담기",
+        key="add_auto_all",
+    ):
+        for chart_fig in _page_figs:
+            my_report.add_item(
+                "chart",
+                my_report.chart_title(chart_fig, "자동 시각화 그래프"),
+                "자동 시각화",
+                chart_fig,
+            )
+        st.toast(f"그래프 {len(_page_figs)}개를 리포트에 담았습니다.")

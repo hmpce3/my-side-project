@@ -6,12 +6,9 @@ from scipy.stats import t
 from scipy.stats import normaltest, bartlett, levene
 from scipy.stats import ttest_1samp, wilcoxon, ttest_rel, ttest_ind, mannwhitneyu
 from scipy.stats import pearsonr, spearmanr
-from pingouin import anova, welch_anova, pairwise_tukey, pairwise_gameshowell
-from statsmodels.formula.api import ols
-import statsmodels.api as sm
 
-from statsmodels.stats.diagnostic import linear_reset
-from statannotations.Annotator import Annotator
+# pingouin / statsmodels / statannotations 는 import가 무겁고 일부 함수에서만
+# 쓰이므로, 각 함수 안에서 필요할 때 지연 import합니다. (앱 시작 속도 개선)
 
 from . import my_plot
 from . import my_prep
@@ -256,6 +253,7 @@ def test_paired(data, before, after, alpha=0.05,
         my_plot.boxplot(data=melt_df, x='group', y='value', hue='group', palette=palette, ax=ax)
 
         # 독립표본 t검정 결과를 시각화에 추가
+        from statannotations.Annotator import Annotator
         annotator = Annotator(data=melt_df,              #데이터프레임
                             x='group',                  # x축 변수
                             y='value',                 # y축 변수
@@ -366,6 +364,7 @@ def test_independent(data, group1, group2, alpha=0.05, plot=True, palette=None, 
         my_plot.boxplot(data=melt_df, x="group", y='value', hue='group', palette=palette, ax=ax)
 
         # 독립표본 검정 결과를 시각화에 추가
+        from statannotations.Annotator import Annotator
         annotator = Annotator(data= melt_df, x="group", y="value", # 데이터프레임, x축, y축
                               pairs=[(lv[0], lv[1])],              # 비교할 그룹 쌍
                               ax=ax)                               # 그래프 축
@@ -413,6 +412,7 @@ def anova_oneway(data, y, between, alpha=0.05):
     equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
 
     # 등분산성 여부에 따라 일반 ANOVA / Welch-ANOVA 선택
+    from pingouin import anova, welch_anova
     if equal_var:
         anova_name = 'anova'
         aov = anova(data=df, dv=y, between=between)
@@ -474,6 +474,7 @@ def posthoc_oneway(data, y, between, alpha=0.05, plot=True, palette=None,
     equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
 
     # 등분산성 여부에 따라 사후 검정 방법 선택
+    from pingouin import pairwise_tukey, pairwise_gameshowell
     if equal_var:
         posthoc_name = 'Tukey HSD'
         result = pairwise_tukey(data=df, dv=y, between=between)
@@ -516,6 +517,7 @@ def posthoc_oneway(data, y, between, alpha=0.05, plot=True, palette=None,
         my_plot.boxplot(data=df, x=between, y=y, hue=between, palette=palette, ax=ax)
 
         # 독립표본 t검정 결과를 시각화에 추가
+        from statannotations.Annotator import Annotator
         annotator = Annotator(data=df, x=between, y=y,
                             pairs=pairs, order=order,
                             ax=ax)                      # 그래프 축
@@ -563,11 +565,14 @@ def anova_twoway(data, y, between, alpha=0.05):
     if equal_var:
         # [등분산 충족] 일반 이원분산분석
         test_name = "two-way ANOVA"
+        from pingouin import anova
         aov = anova(data=df, dv=y, between=list(between))
         # p값 컬럼명은 pingouin 버전에 따라 다를 수 있어 유연하게 선택
         pcol = "p-unc" if "p-unc" in aov.columns else "p_unc"
     else:
         test_name = "OLS (HC3) Type-II ANOVA"
+        from statsmodels.formula.api import ols
+        import statsmodels.api as sm
         # Q()로 컬럼명을 감싸 공백/특수문자가 있는 컬럼명도 안전하게 처리
         formula = "Q('{0}') ~ C(Q('{1}')) * C(Q('{2}'))".format(y, between[0], 
         between[1])
@@ -645,6 +650,7 @@ def posthoc_twoway(data, y, between, alpha=0.05):
     equal_var = bool(assumption[assumption["test"] == "equal_var"]["result"].iloc[0])
 
     # 등분산성 여부에 따라 사후검정 방법 선택
+    from pingouin import pairwise_tukey, pairwise_gameshowell
     if equal_var:
         posthoc_name = "Tukey HSD"
         result = pairwise_tukey(data=df, dv=y, between=group)
@@ -713,6 +719,8 @@ def correlation(data, x, y, alpha=0.05, plot=True, palette=None,
 
     # -- 3) 선형성 검정 (Ramsey RESET Test) --
     # H0: 모형이 올바르게 설정됨(선형). p >=alpha이면 선형성 충족
+    import statsmodels.api as sm
+    from statsmodels.stats.diagnostic import linear_reset
     X = sm.add_constant(vx)
     model = sm.OLS(vy, X).fit()
     linearity = bool(linear_reset(model, power=2, use_f=True).pvalue >=alpha)
@@ -962,6 +970,89 @@ def assumption_test_for_app(data, columns=None, alpha=0.05):
         variance_result = None
 
     return normality_result, variance_result
+
+
+def crosstab_chi2_for_app(data, row_column, col_column, alpha=0.05):
+    """두 범주형 변수의 교차표와 카이제곱 독립성 검정을 수행합니다.
+
+    귀무가설 H0: 두 변수는 서로 독립이다(관계 없다).
+    대립가설 H1: 두 변수는 독립이 아니다(관계 있다).
+
+    Returns:
+        observed (DataFrame): 관측빈도 교차표
+        result (DataFrame): 검정 결과 요약표
+        interpretation (str): 해석 문장
+    """
+    # scipy.stats는 이미 로드돼 있어 비용이 거의 없습니다.
+    from scipy.stats import chi2_contingency
+
+    # 두 컬럼을 함께 결측 제거한 뒤 관측빈도 교차표 생성
+    pair = data[[row_column, col_column]].dropna()
+    observed = pd.crosstab(pair[row_column], pair[col_column])
+
+    # 카이제곱 검정은 행/열 모두 범주가 2개 이상이어야 합니다.
+    if observed.shape[0] < 2 or observed.shape[1] < 2:
+        result = DataFrame([{
+            "검정": "카이제곱 독립성 검정",
+            "통계량(χ²)": None,
+            "자유도": None,
+            "p-value": None,
+            "판정": "검정 불가",
+        }])
+        return observed, result, "두 변수 모두 범주가 2개 이상이어야 카이제곱 검정을 할 수 있습니다."
+
+    chi2, p, dof, expected = chi2_contingency(observed)
+
+    # 기대빈도 5 미만 셀 비율(카이제곱 가정 점검용)
+    expected_lt5_ratio = float((expected < 5).mean())
+
+    # Cramér's V (효과크기) = sqrt(χ² / (n * (min(행,열) - 1)))
+    n = int(observed.values.sum())
+    min_dim = min(observed.shape) - 1
+    cramers_v = sqrt(chi2 / (n * min_dim)) if (n > 0 and min_dim > 0) else 0.0
+
+    if cramers_v >= 0.5:
+        strength = "강함"
+    elif cramers_v >= 0.3:
+        strength = "중간"
+    elif cramers_v >= 0.1:
+        strength = "약함"
+    else:
+        strength = "매우 약함"
+
+    significant = p < alpha
+
+    result = DataFrame([{
+        "검정": "카이제곱 독립성 검정",
+        "통계량(χ²)": round(float(chi2), 4),
+        "자유도": int(dof),
+        "p-value": round(float(p), 4),
+        "Cramér's V": round(float(cramers_v), 4),
+        "관계 강도": strength,
+        "판정": "귀무가설 기각(관계 있음)" if significant else "귀무가설 채택(독립)",
+    }])
+
+    if significant:
+        interpretation = (
+            f"카이제곱 검정 결과 p-value는 {p:.3f}로 유의수준 {alpha}보다 작습니다. "
+            f"따라서 `{row_column}`와(과) `{col_column}`는 서로 독립이라고 보기 어렵습니다. "
+            f"즉, 두 변수 사이에 통계적으로 유의한 관계가 있습니다. "
+            f"관계의 강도(Cramér's V)는 {cramers_v:.3f}로 '{strength}' 수준입니다."
+        )
+    else:
+        interpretation = (
+            f"카이제곱 검정 결과 p-value는 {p:.3f}로 유의수준 {alpha}보다 크거나 같습니다. "
+            f"따라서 `{row_column}`와(과) `{col_column}`가 서로 관계가 있다고 보기 어렵습니다(독립으로 판단)."
+        )
+
+    if expected_lt5_ratio > 0.2:
+        interpretation += (
+            f"\n\n⚠️ 기대빈도가 5 미만인 셀이 {expected_lt5_ratio * 100:.0f}%입니다. "
+            "이 경우 카이제곱 결과의 신뢰도가 떨어질 수 있어, 범주를 합치거나 표본을 늘리는 것을 고려하세요."
+        )
+
+    return observed, result, interpretation
+
 
 def format_p_value(p_value):
     if p_value < 0.0001:

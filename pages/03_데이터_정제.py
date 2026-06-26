@@ -1,15 +1,7 @@
 import streamlit as st
 import pandas as pd
-import importlib
 
 from helpers import my_data
-
-
-# ------------------------------------------------------------
-# 개발 중 helpers/my_data.py를 수정했을 때 Streamlit이 이전 코드를
-# 기억하는 경우가 있어서 reload로 최신 코드를 다시 불러옵니다.
-# ------------------------------------------------------------
-importlib.reload(my_data)
 
 
 # ------------------------------------------------------------

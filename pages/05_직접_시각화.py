@@ -1125,7 +1125,14 @@ elif chart_type == "선그래프":
             )
 
             x_column_for_chart = x_column
-            chart_data = chart_data.sort_values(by=x_column_for_chart)
+            try:
+                chart_data = chart_data.sort_values(by=x_column_for_chart)
+            except TypeError:
+                # X축 값에 여러 타입이 섞여 정렬이 안 되면 문자열 기준으로 정렬합니다.
+                chart_data = chart_data.sort_values(
+                    by=x_column_for_chart,
+                    key=lambda values: values.astype(str),
+                )
 
         default_colors = my_plot.get_color_palette(palette_name)
 

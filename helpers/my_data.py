@@ -451,3 +451,95 @@ def categorical_summary_for_app(data):
         })
 
     return DataFrame(summary_rows)
+
+
+def correlation_overview(data, top_n=8, min_abs=0.3):
+    """수치형 변수 쌍의 상관관계를 강한 순으로 정리하고 해석 문장을 만듭니다.
+
+    데이터셋에 어떤 관계가 숨어 있는지 빠르게 훑어 '분석 주제'를 잡는 데 도움을 줍니다.
+
+    Args:
+        data (DataFrame): 분석할 데이터
+        top_n (int): 표에 보여줄 상위 쌍 개수
+        min_abs (float): 이 값 이상의 |상관계수|만 '주목할 관계'로 해석
+
+    Returns:
+        ranked (DataFrame): [변수1, 변수2, 상관계수, 강도, 방향] (강한 순)
+        insight (str): 해석 문장
+    """
+    empty = DataFrame(columns=["변수1", "변수2", "상관계수", "강도", "방향"])
+
+    numeric = data.select_dtypes(include="number")
+    # 값이 하나뿐인(상수) 컬럼은 상관 계산 불가라 제외
+    numeric = numeric.loc[:, numeric.nunique(dropna=True) > 1]
+
+    if numeric.shape[1] < 2:
+        return empty, "상관관계를 볼 수치형 변수가 2개 미만이라 분석할 수 없습니다."
+
+    corr = numeric.corr()
+
+    # 상삼각만 추출(자기 자신·중복 쌍 제외)
+    rows = []
+    cols = list(corr.columns)
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            r = corr.iloc[i, j]
+            if pd.isna(r):
+                continue
+            rows.append({
+                "변수1": cols[i],
+                "변수2": cols[j],
+                "상관계수": round(float(r), 3),
+            })
+
+    if not rows:
+        return empty, "계산 가능한 상관관계가 없습니다(결측이 너무 많을 수 있어요)."
+
+    ranked = DataFrame(rows)
+    abs_corr = ranked["상관계수"].abs()
+
+    conditions = [abs_corr >= 0.7, abs_corr >= 0.4, abs_corr >= 0.2]
+    labels = ["강함", "중간", "약함"]
+    ranked["강도"] = np.select(conditions, labels, default="매우 약함")
+    ranked["방향"] = np.select(
+        [ranked["상관계수"] > 0, ranked["상관계수"] < 0],
+        ["양(+)", "음(-)"],
+        default="없음",
+    )
+
+    ranked = (
+        ranked.reindex(abs_corr.sort_values(ascending=False).index)
+        .reset_index(drop=True)
+        .head(top_n)
+    )
+
+    # --- 해석 문장 ---
+    notable = ranked[ranked["상관계수"].abs() >= min_abs]
+
+    if notable.empty:
+        insight = (
+            f"수치형 변수 {numeric.shape[1]}개 사이에 뚜렷한 상관관계(|r| ≥ {min_abs})가 보이지 않습니다. "
+            "변수들이 비교적 독립적이에요. 이런 데이터는 '관계 분석'보다 그룹별 비교나 분포 분석이 더 어울릴 수 있어요."
+        )
+    else:
+        top = notable.iloc[0]
+        increase = "커지는" if top["상관계수"] > 0 else "작아지는"
+        direction = "같이 커지는(양의)" if top["상관계수"] > 0 else "반대로 움직이는(음의)"
+
+        lines = [
+            f"가장 주목할 관계는 **{top['변수1']} ↔ {top['변수2']}** 입니다 "
+            f"(상관계수 {top['상관계수']}, {top['강도']} {direction} 관계). "
+            f"`{top['변수1']}`가 커질 때 `{top['변수2']}`도 {increase} 경향이 있어요."
+        ]
+
+        others = notable.iloc[1:4]
+        if not others.empty:
+            parts = [f"{row['변수1']}↔{row['변수2']}({row['상관계수']})" for _, row in others.iterrows()]
+            lines.append("그 외 주목할 관계: " + ", ".join(parts) + ".")
+
+        lines.append(
+            "⚠️ 상관관계가 곧 인과관계는 아니에요 — 관계가 보이면 '왜 그런지'를 도메인 지식으로 따져봐야 합니다."
+        )
+        insight = "\n\n".join(lines)
+
+    return ranked, insight

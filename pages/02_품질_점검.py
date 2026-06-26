@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 
 from helpers import my_data
+from helpers import my_report
 
 
 st.title("데이터 품질 점검")
@@ -169,4 +170,31 @@ else:
     st.dataframe(
         categorical_summary,
         use_container_width=True
+    )
+
+
+# ------------------------------------------------------------
+# 주요 상관관계 (변수 간 관계 미리보기)
+# ------------------------------------------------------------
+# 어떤 수치형 변수들이 함께 움직이는지 자동으로 찾아, 이 데이터로
+# 어떤 분석/주제가 가능할지 빠르게 가늠하는 데 도움을 줍니다.
+# ------------------------------------------------------------
+st.subheader("주요 상관관계")
+st.caption("수치형 변수들 사이에서 강한 관계를 자동으로 찾아 정리합니다. (어떤 데이터를 쓸지·주제를 잡을 때 유용)")
+
+corr_ranked, corr_insight = my_data.correlation_overview(data)
+
+if corr_ranked.empty:
+    st.info(corr_insight)
+else:
+    st.dataframe(corr_ranked, use_container_width=True, hide_index=True)
+    st.info(corr_insight)
+
+    my_report.report_button(
+        "stat",
+        "주요 상관관계 요약",
+        "품질 점검",
+        {"table": corr_ranked, "text": corr_insight},
+        key="add_corr_overview",
+        label="📌 상관관계 요약 리포트에 담기",
     )

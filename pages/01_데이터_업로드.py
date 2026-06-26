@@ -4,6 +4,15 @@ import pandas as pd
 from helpers import my_data
 
 
+# 업로드한 파일을 한 번만 읽도록 캐싱합니다.
+# (파일을 여러 개 올렸을 때, 위젯을 조작할 때마다 전부 다시 읽는 것을 방지)
+# file_key(파일명+크기)로만 캐시를 구분하고, 파일 객체(_uploaded_file)는
+# 언더스코어 접두사로 해싱에서 제외합니다. (Streamlit 버전과 무관하게 안전)
+@st.cache_data(show_spinner=False)
+def _cached_read(file_key, _uploaded_file):
+    return my_data.read_data_file(_uploaded_file)
+
+
 st.title("데이터 업로드 / 결합")
 
 st.write("파일을 업로드하면 데이터를 불러오고, 여러 파일을 결합할 수 있습니다.")
@@ -18,19 +27,25 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     dataframes = []
     file_information = []
+    failed_files = []
 
-    for uploaded_file in uploaded_files:
+    # 파일이 많을 때 진행 상황을 보여주고, 한 파일이 깨져도 전체를 멈추지 않습니다.
+    progress = st.progress(0.0, text="파일을 읽는 중...")
+
+    for index, uploaded_file in enumerate(uploaded_files):
         try:
-            file_data, file_info = my_data.read_data_file(uploaded_file)
-            if len(uploaded_files) > 1:
-                file_data["__source_file__"] = uploaded_file.name
-
+            # _cached_read는 복사본을 돌려주므로 안전하게 변형할 수 있습니다.
+            file_key = f"{uploaded_file.name}::{uploaded_file.size}"
+            file_data, file_info = _cached_read(file_key, uploaded_file)
         except Exception as error:
-            st.error(
-                f"{uploaded_file.name} 파일을 읽을 수 없습니다.\n\n"
-                f"오류 내용: {error}"
-            )
-            st.stop()
+            failed_files.append({
+                "파일명": uploaded_file.name,
+                "오류": str(error),
+            })
+            continue
+
+        if len(uploaded_files) > 1:
+            file_data["__source_file__"] = uploaded_file.name
 
         file_data = file_data.loc[
             :,
@@ -46,6 +61,22 @@ if uploaded_files:
             "열 개수": file_data.shape[1],
             "컬럼": ", ".join(file_data.columns)
         })
+
+        progress.progress(
+            (index + 1) / len(uploaded_files),
+            text=f"파일을 읽는 중... ({index + 1}/{len(uploaded_files)})",
+        )
+
+    progress.empty()
+
+    # 읽지 못한 파일은 건너뛰고, 어떤 파일이 실패했는지 표로 알려줍니다.
+    if failed_files:
+        st.warning(f"{len(failed_files)}개 파일을 읽지 못해 건너뛰었습니다.")
+        st.dataframe(pd.DataFrame(failed_files), use_container_width=True)
+
+    if not dataframes:
+        st.error("읽을 수 있는 파일이 없습니다. 파일 형식이나 인코딩을 확인해주세요.")
+        st.stop()
 
     st.subheader("업로드 파일 정보")
     st.dataframe(
@@ -194,6 +225,16 @@ if uploaded_files:
     st.success(
         f"최종 데이터는 {len(data):,}행, {len(data.columns):,}열입니다."
     )
+
+    # 결합 데이터의 메모리 크기를 보여주고, 너무 크면 안내합니다.
+    memory_mb = data.memory_usage(deep=True).sum() / 1024 / 1024
+    st.caption(f"메모리 사용량: 약 {memory_mb:,.1f} MB")
+
+    if memory_mb > 150 or len(data) > 1_000_000:
+        st.warning(
+            "데이터가 큽니다. 시각화·통계는 '빠른 분석용 샘플 데이터'로 보는 것을 권장합니다. "
+            "(배포 환경은 메모리가 제한적이라 큰 데이터에서는 느려지거나 멈출 수 있어요.)"
+        )
 
     st.subheader("데이터 기본 정보")
 

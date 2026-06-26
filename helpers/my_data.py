@@ -173,6 +173,11 @@ def numerical_summary(data, columns=None, save_path=None):
     if not columns:
         columns = get_number_column_names(data)
 
+    # 숫자형 컬럼이 없으면 빈 결과를 반환합니다.
+    # (빈 컬럼 목록으로 describe()를 호출하면 "Cannot describe a DataFrame without columns" ValueError가 납니다.)
+    if not columns:
+        return DataFrame()
+
     desc_df = data[columns].describe().T
 
     #----------------------------------------------------------------

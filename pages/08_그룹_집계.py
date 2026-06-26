@@ -86,6 +86,11 @@ if len(group_columns) > 2:
     st.warning("그룹 기준 컬럼은 최대 2개까지 선택할 수 있습니다.")
     st.stop()
 
+# 집계할 값 컬럼이 그룹 기준에 포함되면 의미도 없고 오류가 납니다.
+if value_column is not None and value_column in group_columns:
+    st.warning("집계할 '값 컬럼'은 '그룹 기준 컬럼'과 다르게 선택해주세요. (같은 컬럼끼리는 집계할 수 없어요)")
+    st.stop()
+
 # 카디널리티(고유값) 경고 — 그룹이 너무 많으면 표가 의미 없어집니다.
 for column in group_columns:
     unique_count = data[column].nunique(dropna=True)
@@ -116,13 +121,15 @@ if len(group_columns) == 1:
         )
         value_name = "개수"
     else:
+        # 시리즈 이름을 미리 value_name으로 바꿔, reset_index에서 컬럼명이
+        # 그룹명과 겹쳐 충돌하는 것을 방지합니다.
+        value_name = f"{value_column} {agg_label}"
         result = (
             data.groupby(group, dropna=False)[value_column]
             .agg(agg_map[agg_label])
+            .rename(value_name)
             .reset_index()
         )
-        value_name = f"{value_column} {agg_label}"
-        result.columns = [group, value_name]
 
     result = result.sort_values(value_name, ascending=False).reset_index(drop=True)
 

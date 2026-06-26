@@ -44,6 +44,9 @@ if uploaded_files:
             })
             continue
 
+        # 컬럼명을 문자열로 통일 (숫자/혼합 컬럼명에서의 .str / join 크래시 방지)
+        file_data.columns = file_data.columns.map(str)
+
         if len(uploaded_files) > 1:
             file_data["__source_file__"] = uploaded_file.name
 
@@ -221,6 +224,11 @@ if uploaded_files:
             else:
                 st.info("다른 파일을 선택하거나 결합 방법을 변경해주세요.")
                 st.stop()
+
+    # 컬럼명을 문자열로 통일하고 중복 컬럼을 제거합니다.
+    # (숫자형/중복 컬럼명이 이후 분석에서 일으키는 크래시를 근본적으로 방지)
+    data.columns = data.columns.map(str)
+    data = data.loc[:, ~data.columns.duplicated()]
 
     st.success(
         f"최종 데이터는 {len(data):,}행, {len(data.columns):,}열입니다."

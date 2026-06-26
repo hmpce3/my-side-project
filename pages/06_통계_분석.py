@@ -396,6 +396,12 @@ elif test_type == "독립표본 T-TEST":
             data[group_column].isin(selected_groups)
         ][[group_column, value_column]].dropna()
 
+        # 결측 제거 후 한 집단의 데이터가 부족하면 검정할 수 없습니다.
+        group_sizes = filtered_data[group_column].value_counts()
+        if len(group_sizes) < 2 or group_sizes.min() < 2:
+            st.warning("결측치를 제외하면 한 집단의 데이터가 부족합니다. 다른 변수나 집단을 선택해주세요.")
+            st.stop()
+
         group_summary = (
             filtered_data
             .groupby(group_column)[value_column]
@@ -543,6 +549,12 @@ elif test_type == "일원분산분석 ANOVA":
         filtered_data = data[
             data[group_column].isin(selected_groups)
         ][[group_column, value_column]].dropna()
+
+        # 결측 제거 후 집단이 3개 미만으로 줄거나 표본이 부족하면 분산분석 불가
+        anova_group_sizes = filtered_data[group_column].value_counts()
+        if len(anova_group_sizes) < 3 or anova_group_sizes.min() < 2:
+            st.warning("결측치를 제외하면 집단이 3개 미만이거나 일부 집단의 데이터가 부족합니다. 다른 변수나 집단을 선택해주세요.")
+            st.stop()
 
         # ------------------------------------------------------------
         # 2) 집단별 요약 확인
@@ -811,6 +823,12 @@ elif test_type == "상관분석":
         st.warning("서로 다른 두 숫자형 변수를 선택해주세요.")
 
     elif st.button("상관분석 실행"):
+        # 결측 제거 후 공통 데이터가 3개 미만이면 상관분석을 할 수 없습니다.
+        corr_pair = stats_data[[x_column, y_column]].dropna()
+        if len(corr_pair) < 3:
+            st.warning("두 변수에서 결측치를 제외한 공통 데이터가 3개 이상이어야 상관분석을 할 수 있습니다.")
+            st.stop()
+
         # ------------------------------------------------------------
         # 1. 상관분석 실행
         # ------------------------------------------------------------

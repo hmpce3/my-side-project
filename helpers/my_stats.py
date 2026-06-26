@@ -409,7 +409,9 @@ def anova_oneway(data, y, between, alpha=0.05):
     assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
 
     # 등분산성 충족 여부 추출(정규성은 robust 가정에 따라 분기에 사용하지 않음)
-    equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
+    # 집단이 1개로 줄면 equal_var 행이 없을 수 있으므로 비어 있는 경우를 방어합니다.
+    equal_var_result = assumption[assumption['test'] == 'equal_var']['result']
+    equal_var = bool(equal_var_result.iloc[0]) if not equal_var_result.empty else False
 
     # 등분산성 여부에 따라 일반 ANOVA / Welch-ANOVA 선택
     from pingouin import anova, welch_anova
@@ -471,7 +473,9 @@ def posthoc_oneway(data, y, between, alpha=0.05, plot=True, palette=None,
     assumption = test_assumptions(wide, columns=list(wide.columns), alpha=alpha)
 
     # 등분산성 충족 여부 추출(정규성은 robust 가정에 따라 분기에 사용하지 않음)
-    equal_var = bool(assumption[assumption['test'] == 'equal_var']['result'].iloc[0])
+    # 집단이 1개로 줄면 equal_var 행이 없을 수 있으므로 비어 있는 경우를 방어합니다.
+    equal_var_result = assumption[assumption['test'] == 'equal_var']['result']
+    equal_var = bool(equal_var_result.iloc[0]) if not equal_var_result.empty else False
 
     # 등분산성 여부에 따라 사후 검정 방법 선택
     from pingouin import pairwise_tukey, pairwise_gameshowell
@@ -721,9 +725,13 @@ def correlation(data, x, y, alpha=0.05, plot=True, palette=None,
     # H0: 모형이 올바르게 설정됨(선형). p >=alpha이면 선형성 충족
     import statsmodels.api as sm
     from statsmodels.stats.diagnostic import linear_reset
-    X = sm.add_constant(vx)
-    model = sm.OLS(vy, X).fit()
-    linearity = bool(linear_reset(model, power=2, use_f=True).pvalue >=alpha)
+    try:
+        X = sm.add_constant(vx)
+        model = sm.OLS(vy, X).fit()
+        linearity = bool(linear_reset(model, power=2, use_f=True).pvalue >= alpha)
+    except Exception:
+        # 표본이 적거나 완전 공선성 등으로 선형성 검정이 불가하면 '판단 보류'로 둡니다.
+        linearity = True
 
     # -- 4) 이상치(영향점) 및 왜도 점검 --
     # IQR(사분위수) 울타리를 벗어난 행을 제외한 데이터를 별도로 만들어, 피어슨 r이 크게 바뀌면(>=0.1) '영향점'으로 판단한다.
@@ -737,9 +745,13 @@ def correlation(data, x, y, alpha=0.05, plot=True, palette=None,
         trimmed = trimmed[(trimmed[col] >= q1 - 1.5 * iqr) & (trimmed[col] <= q3 + 1.5 * iqr)]
 
     r_full = pearsonr(vx, vy)[0]
-    r_trim = pearsonr(trimmed[x], trimmed[y])[0]
-    influential = bool(abs(r_full - r_trim) >= 0.1)
-    high_skew = bool(abs(vx.skew()) > 1 or abs(vy.skew()) >1)    
+    # 이상치 제거 후 표본이 2개 미만이면 영향점 판단을 생략합니다.
+    if len(trimmed) >= 2:
+        r_trim = pearsonr(trimmed[x], trimmed[y])[0]
+        influential = bool(abs(r_full - r_trim) >= 0.1)
+    else:
+        influential = False
+    high_skew = bool(abs(vx.skew()) > 1 or abs(vy.skew()) >1)
 
     # -- 5) 가정에 따른 상관계수 선택 --
     # 모든 가정을 충족하면 피어슨, 하나라도 위반하면 스피어만을 사용한다.

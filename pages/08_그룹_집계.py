@@ -149,12 +149,15 @@ if len(group_columns) == 1:
     report_fig.update_layout(xaxis={"categoryorder": "total descending"})
     st.plotly_chart(report_fig, use_container_width=True)
 
-    # 간단 인사이트(최대 그룹)
-    top_row = result.iloc[0]
-    st.info(
-        f"`{top_row[group]}` 그룹의 {value_name}가 "
-        f"{top_row[value_name]:,.2f}로 가장 큽니다."
-    )
+    # 간단 인사이트(최대 그룹) — 결과가 비어 있지 않을 때만
+    if not result.empty:
+        top_row = result.iloc[0]
+        top_value = top_row[value_name]
+        top_value_text = f"{top_value:,.2f}" if pd.notna(top_value) else "계산 불가"
+        st.info(
+            f"`{top_row[group]}` 그룹의 {value_name}가 "
+            f"{top_value_text}로 가장 큽니다."
+        )
 
 # --- 그룹 컬럼이 2개: 피벗표 + 히트맵 ---
 else:

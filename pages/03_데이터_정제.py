@@ -814,8 +814,21 @@ if "여러 컬럼을 하나로 합치기 (wide → long)" in cleaning_options:
             key="melt_value_name",
         )
 
+    # 새 컬럼 이름이 서로 같거나 기준 컬럼과 겹치면 melt가 오류를 내므로 미리 막습니다.
+    name_conflict = (
+        var_name == value_name
+        or var_name in id_columns
+        or value_name in id_columns
+    )
+
+    if name_conflict and var_name and value_name:
+        st.warning(
+            "새 구분 컬럼과 값 컬럼 이름은 서로 다르고, 기준 컬럼 이름과도 겹치지 않아야 합니다."
+        )
+
     can_make_melt_preview = bool(
         id_columns and value_columns and var_name and value_name
+        and not name_conflict
     )
 
     if can_make_melt_preview:

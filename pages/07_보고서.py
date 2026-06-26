@@ -94,22 +94,25 @@ else:
         ):
             kind = item["kind"]
 
-            # 미리보기
-            if kind == "chart":
-                st.plotly_chart(
-                    item["payload"],
-                    use_container_width=True,
-                    key=f"preview_{item['id']}",
-                )
-            elif kind == "table":
-                st.dataframe(item["payload"], use_container_width=True)
-            elif kind == "stat":
-                table = item["payload"].get("table")
-                text = item["payload"].get("text")
-                if table is not None:
-                    st.dataframe(table, use_container_width=True)
-                if text:
-                    st.info(text)
+            # 미리보기 (항목 하나가 깨져도 보고서 전체가 멈추지 않도록 방어)
+            try:
+                if kind == "chart":
+                    st.plotly_chart(
+                        item["payload"],
+                        use_container_width=True,
+                        key=f"preview_{item['id']}",
+                    )
+                elif kind == "table":
+                    st.dataframe(item["payload"], use_container_width=True)
+                elif kind == "stat":
+                    table = item["payload"].get("table")
+                    text = item["payload"].get("text")
+                    if table is not None:
+                        st.dataframe(table, use_container_width=True)
+                    if text:
+                        st.info(text)
+            except Exception as error:
+                st.error(f"이 항목을 표시할 수 없습니다: {error}")
 
             if item.get("caption"):
                 st.markdown(f"💡 **자동 인사이트**: {item['caption']}")

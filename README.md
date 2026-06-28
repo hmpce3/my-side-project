@@ -16,6 +16,7 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
 - 숫자형/범주형 데이터 요약
 - 주요 상관관계 자동 인사이트
 - 데이터 정제 및 타입 변환
+- 숫자형 구간화(binning)와 정규화/스케일링(Min-Max, Z-점수)
 - 자동 시각화
 - 직접 시각화
 - 그룹별 집계 및 피벗 테이블
@@ -26,17 +27,22 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
   - 일원분산분석 ANOVA
   - 상관분석
   - 교차분석(카이제곱 검정)
+  - 비모수 검정(Mann-Whitney U, Wilcoxon, Kruskal-Wallis)
+- 회귀분석(단순·다중 선형회귀, R²·회귀계수·잔차 진단)
+- 시계열 분석(기간별 리샘플링, 이동평균, 추세 해석)
 - 분석 결과를 HTML 보고서로 내보내기
 
 ## 사용 흐름
 
 1. 데이터 업로드 / 결합
 2. 데이터 품질 점검
-3. 데이터 정제
+3. 데이터 정제 (구간화·스케일링 포함)
 4. 자동 시각화 또는 직접 시각화
 5. 그룹별 집계
-6. 통계 분석
-7. 보고서 생성
+6. 통계 분석 (모수 / 비모수)
+7. 회귀분석
+8. 시계열 분석
+9. 보고서 생성
 
 ## 기술 스택
 
@@ -92,6 +98,7 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
 - Summarize numerical and categorical data
 - Generate automatic correlation insights
 - Clean data and convert data types
+- Bin numeric columns and normalize/scale them (Min-Max, Z-score)
 - Create automatic visualizations
 - Create custom visualizations
 - Perform group aggregation and pivot-style analysis
@@ -102,17 +109,22 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
   - One-way ANOVA
   - Correlation analysis
   - Crosstab analysis with chi-square test
+  - Non-parametric tests (Mann-Whitney U, Wilcoxon, Kruskal-Wallis)
+- Regression analysis (simple/multiple linear regression with R², coefficients, residual diagnostics)
+- Time series analysis (period resampling, moving average, trend insight)
 - Export analysis results as an HTML report
 
 ## Workflow
 
 1. Upload and combine data
 2. Check data quality
-3. Clean data
+3. Clean data (including binning and scaling)
 4. Create automatic or custom visualizations
 5. Aggregate data by group
-6. Run statistical analysis
-7. Generate a report
+6. Run statistical analysis (parametric / non-parametric)
+7. Run regression analysis
+8. Run time series analysis
+9. Generate a report
 
 ## Tech Stack
 

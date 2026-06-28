@@ -1558,3 +1558,55 @@ def make_scatter_with_trendline(data, x, y, color=None):
     )
 
     return fig
+
+
+def make_residual_plot(resid_df, pred_column="예측값", resid_column="잔차"):
+    """
+    회귀분석 잔차 진단 플롯: 예측값(x) 대비 잔차(y) 산점도.
+
+    좋은 모델이라면 점들이 0 기준선 주변에 특정 패턴 없이 고르게 퍼져 있어야 합니다.
+    깔때기 모양(퍼짐이 점점 커짐)·곡선 패턴이 보이면 모델 가정이 깨졌다는 신호입니다.
+    """
+
+    fig = px.scatter(
+        resid_df,
+        x=pred_column,
+        y=resid_column,
+        opacity=0.65,
+        title="잔차 진단 (예측값 대비 잔차)",
+    )
+
+    fig.update_traces(marker=dict(size=7))
+
+    # 잔차 0 기준선
+    fig.add_hline(y=0, line_dash="dash", line_color="#e45756")
+
+    return fig
+
+
+def make_timeseries_line(ts_df, date_column, value_columns, title="시계열 추이"):
+    """
+    시계열 집계 결과를 선그래프로 그립니다.
+
+    value_columns에 [원래값, 이동평균]처럼 여러 컬럼을 넘기면
+    한 그래프에 함께 표시합니다.
+    """
+
+    if isinstance(value_columns, str):
+        value_columns = [value_columns]
+
+    fig = px.line(
+        ts_df,
+        x=date_column,
+        y=value_columns,
+        markers=True,
+        title=title,
+    )
+
+    fig.update_layout(
+        legend_title_text="",
+        xaxis_title=date_column,
+        yaxis_title="값",
+    )
+
+    return fig

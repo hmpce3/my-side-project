@@ -1431,3 +1431,265 @@ def make_posthoc_insight(posthoc_result, alpha=0.05):
     )
 
     return insight_text
+
+
+# ============================================================
+# 회귀분석 (선형회귀, OLS)
+# ============================================================
+# 상관분석이 "관계가 있나?"까지 답한다면, 회귀분석은
+# "X가 1만큼 변하면 Y는 얼마나 변하나?", "이 모델이 Y를 얼마나 설명하나(R²)?"
+# 까지 답합니다. statsmodels의 OLS를 사용합니다.
+# ============================================================
+def linear_regression_for_app(data, y_column, x_columns, alpha=0.05):
+    """
+    선형회귀(OLS)를 수행하고 화면 표시용 결과를 돌려줍니다.
+
+    x_columns가 1개면 단순선형회귀, 여러 개면 다중선형회귀입니다.
+    범주형(object/category) 설명변수는 자동으로 더미변수로 변환합니다.
+
+    Args:
+        data (DataFrame): 분석할 데이터
+        y_column (str): 종속변수(예측 대상, 숫자형)
+        x_columns (list): 설명변수 목록
+        alpha (float): 신뢰구간 계산용 유의수준 (기본 0.05 → 95% 신뢰구간)
+
+    Returns:
+        coef_table (DataFrame): [변수, 계수, 표준오차, t, p-value, 유의성, 신뢰구간 하한/상한]
+        metrics (dict): {n, k, r2, adj_r2, f_pvalue}
+        resid_df (DataFrame): [예측값, 잔차] (잔차 진단 플롯용)
+    """
+    import statsmodels.api as sm
+
+    x_columns = list(x_columns)
+
+    # 1) 사용할 컬럼만 남기고 결측 행 제거
+    use_columns = [y_column] + x_columns
+    df = data[use_columns].dropna().copy()
+
+    # 2) 종속변수는 숫자형이어야 합니다.
+    df[y_column] = pd.to_numeric(df[y_column], errors="coerce")
+    df = df.dropna(subset=[y_column])
+
+    if df.empty or len(df) <= len(x_columns) + 1:
+        raise ValueError("결측치를 제외한 데이터가 회귀분석을 하기에 너무 적습니다.")
+
+    y = df[y_column].astype(float)
+    X = df[x_columns]
+
+    # 3) 범주형 설명변수는 더미변수(원-핫)로 변환합니다.
+    #    drop_first=True : 기준 범주 하나를 빼서 다중공선성을 피합니다.
+    X = pd.get_dummies(X, drop_first=True)
+
+    # get_dummies 결과(bool)와 정수 컬럼을 모두 float으로 맞춰 줍니다.
+    X = X.astype(float)
+
+    if X.shape[1] == 0:
+        raise ValueError("설명변수에서 사용할 수 있는 값이 없습니다. 다른 변수를 선택해주세요.")
+
+    # 4) 상수항(절편) 추가 후 OLS 적합
+    X_with_const = sm.add_constant(X)
+    model = sm.OLS(y, X_with_const).fit()
+
+    # 5) 계수표 구성
+    conf_int = model.conf_int(alpha=alpha)
+    coef_table = DataFrame({
+        "변수": model.params.index,
+        "계수": model.params.values,
+        "표준오차": model.bse.values,
+        "t": model.tvalues.values,
+        "p-value": model.pvalues.values,
+        f"{int((1 - alpha) * 100)}% 하한": conf_int[0].values,
+        f"{int((1 - alpha) * 100)}% 상한": conf_int[1].values,
+    })
+
+    # const(절편)는 보기 좋게 '절편(상수)'으로 표시
+    coef_table["변수"] = coef_table["변수"].replace({"const": "절편(상수)"})
+
+    coef_table["유의성"] = np.where(
+        coef_table["p-value"] < alpha, "유의함", "유의하지 않음"
+    )
+
+    metrics = {
+        "n": int(model.nobs),
+        "k": int(X.shape[1]),
+        "r2": float(model.rsquared),
+        "adj_r2": float(model.rsquared_adj),
+        "f_pvalue": float(model.f_pvalue),
+    }
+
+    resid_df = DataFrame({
+        "예측값": model.fittedvalues.values,
+        "잔차": model.resid.values,
+    })
+
+    return coef_table, metrics, resid_df
+
+
+def make_regression_interpretation(coef_table, metrics, y_column, alpha=0.05):
+    """
+    회귀분석 결과(계수표 + 모델 지표)를 사람이 읽기 쉬운 해석 문장으로 만듭니다.
+    """
+    r2 = metrics["r2"]
+    adj_r2 = metrics["adj_r2"]
+    f_pvalue = metrics["f_pvalue"]
+    n = metrics["n"]
+
+    lines = []
+
+    # 1) 모델 전체 설명력(R²)과 유의성(F검정)
+    if f_pvalue < alpha:
+        model_sig = (
+            f"모델 전체의 p-value(F검정)는 {format_p_value(f_pvalue)}로 유의수준 {alpha}보다 작아, "
+            "이 회귀모델은 통계적으로 의미가 있다고 볼 수 있습니다."
+        )
+    else:
+        model_sig = (
+            f"모델 전체의 p-value(F검정)는 {format_p_value(f_pvalue)}로 유의수준 {alpha}보다 크거나 같아, "
+            "이 설명변수들로는 종속변수를 의미 있게 설명한다고 보기 어렵습니다."
+        )
+
+    lines.append(
+        f"결정계수 R²는 {r2:.3f}입니다. 즉, 선택한 설명변수들이 "
+        f"`{y_column}`의 변동 중 약 {r2 * 100:.1f}%를 설명합니다 "
+        f"(설명변수 개수를 보정한 수정 R²는 {adj_r2:.3f}). {model_sig} (표본 수 n={n})"
+    )
+
+    # 2) 유의한 설명변수들의 방향과 크기
+    predictors = coef_table[coef_table["변수"] != "절편(상수)"]
+    significant = predictors[predictors["p-value"] < alpha]
+
+    if significant.empty:
+        lines.append(
+            "개별 설명변수 중에서 통계적으로 유의한(p < "
+            f"{alpha}) 변수는 없습니다. 변수 선택을 다시 고려해볼 수 있습니다."
+        )
+    else:
+        parts = []
+        for _, row in significant.iterrows():
+            coef = row["계수"]
+            direction = "증가" if coef > 0 else "감소"
+            parts.append(
+                f"`{row['변수']}`가 1단위 늘어날 때 `{y_column}`는 평균 {abs(coef):.3f}만큼 {direction}하는 경향"
+                f"(p={format_p_value(row['p-value'])})"
+            )
+        lines.append(
+            "유의한 설명변수 해석: " + " / ".join(parts) +
+            ". (다른 변수가 고정되어 있다는 가정 아래의 해석입니다.)"
+        )
+
+    # 3) 주의사항
+    lines.append(
+        "⚠️ 회귀계수는 상관과 마찬가지로 곧바로 인과관계를 뜻하지 않으며, "
+        "데이터 범위를 벗어난 값에 대한 예측(외삽)은 신뢰하기 어렵습니다. "
+        "또한 다중회귀에서는 설명변수끼리 강하게 상관되면(다중공선성) 계수 해석이 불안정해질 수 있습니다."
+    )
+
+    return "\n\n".join(lines)
+
+
+# ============================================================
+# 비모수 검정 (정규성 가정이 깨졌을 때의 대안)
+# ============================================================
+# t검정·ANOVA는 정규성을 가정합니다. 정규성 검정에서 "정규분포 아님"이
+# 나오면, 평균 대신 순위(중앙값 경향)를 비교하는 비모수 검정을 씁니다.
+#   - 독립 2집단  : Mann-Whitney U
+#   - 대응 2집단  : Wilcoxon 부호순위
+#   - 독립 3집단↑ : Kruskal-Wallis
+# ============================================================
+def mannwhitney_for_app(data, group_column, value_column, groups, alpha=0.05):
+    """독립 두 집단의 분포(중앙값 경향) 차이를 보는 Mann-Whitney U 검정."""
+    filtered = data[data[group_column].isin(groups)][[group_column, value_column]].dropna()
+    filtered[value_column] = pd.to_numeric(filtered[value_column], errors="coerce")
+    filtered = filtered.dropna()
+
+    g1 = filtered[filtered[group_column] == groups[0]][value_column]
+    g2 = filtered[filtered[group_column] == groups[1]][value_column]
+
+    if len(g1) < 1 or len(g2) < 1:
+        raise ValueError("결측치를 제외하면 한 집단의 데이터가 없습니다.")
+
+    statistic, p_value = mannwhitneyu(g1, g2, alternative="two-sided")
+
+    result = DataFrame({
+        "검정": ["Mann-Whitney U"],
+        "집단1": [f"{groups[0]} (n={len(g1)}, 중앙값={g1.median():.3f})"],
+        "집단2": [f"{groups[1]} (n={len(g2)}, 중앙값={g2.median():.3f})"],
+        "통계량(U)": [round(float(statistic), 3)],
+        "p-value": [round(float(p_value), 4)],
+    })
+
+    interpretation = make_test_interpretation("Mann-Whitney U 검정", p_value, alpha)
+    return result, interpretation
+
+
+def wilcoxon_for_app(data, before_column, after_column, alpha=0.05):
+    """대응 두 값의 차이를 보는 Wilcoxon 부호순위 검정."""
+    paired = data[[before_column, after_column]].dropna()
+    paired[before_column] = pd.to_numeric(paired[before_column], errors="coerce")
+    paired[after_column] = pd.to_numeric(paired[after_column], errors="coerce")
+    paired = paired.dropna()
+
+    if len(paired) < 1:
+        raise ValueError("결측치를 제외한 대응 데이터가 없습니다.")
+
+    diff = paired[after_column] - paired[before_column]
+    if (diff == 0).all():
+        raise ValueError("두 변수의 값이 완전히 같아 검정할 수 없습니다.")
+
+    statistic, p_value = wilcoxon(paired[before_column], paired[after_column])
+
+    result = DataFrame({
+        "검정": ["Wilcoxon 부호순위"],
+        "변수1": [f"{before_column} (중앙값={paired[before_column].median():.3f})"],
+        "변수2": [f"{after_column} (중앙값={paired[after_column].median():.3f})"],
+        "쌍 개수": [len(paired)],
+        "통계량(W)": [round(float(statistic), 3)],
+        "p-value": [round(float(p_value), 4)],
+    })
+
+    interpretation = make_test_interpretation("Wilcoxon 부호순위 검정", p_value, alpha)
+    return result, interpretation
+
+
+def kruskal_for_app(data, group_column, value_column, groups, alpha=0.05):
+    """독립 3집단 이상의 분포 차이를 보는 Kruskal-Wallis 검정."""
+    from scipy.stats import kruskal
+
+    filtered = data[data[group_column].isin(groups)][[group_column, value_column]].dropna()
+    filtered[value_column] = pd.to_numeric(filtered[value_column], errors="coerce")
+    filtered = filtered.dropna()
+
+    samples = []
+    rows = []
+    for group in groups:
+        values = filtered[filtered[group_column] == group][value_column]
+        if len(values) < 1:
+            continue
+        samples.append(values)
+        rows.append({
+            "집단": group,
+            "표본 수": len(values),
+            "중앙값": round(float(values.median()), 3),
+            "평균": round(float(values.mean()), 3),
+        })
+
+    if len(samples) < 3:
+        raise ValueError("결측치를 제외하면 집단이 3개 미만입니다.")
+
+    statistic, p_value = kruskal(*samples)
+
+    summary = DataFrame(rows)
+    result = DataFrame({
+        "검정": ["Kruskal-Wallis"],
+        "집단 수": [len(samples)],
+        "통계량(H)": [round(float(statistic), 3)],
+        "p-value": [round(float(p_value), 4)],
+    })
+
+    interpretation = make_test_interpretation("Kruskal-Wallis 검정", p_value, alpha)
+    if p_value < alpha:
+        interpretation += (
+            "\n\n적어도 한 집단의 분포(중앙값 경향)가 다른 집단과 다르다고 볼 수 있습니다. "
+            "어떤 집단끼리 다른지는 추가로 짝별 Mann-Whitney 비교(다중비교 보정 포함)로 확인할 수 있습니다."
+        )
+    return summary, result, interpretation

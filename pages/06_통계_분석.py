@@ -140,9 +140,25 @@ test_type = st.selectbox(
         "독립표본 T-TEST",
         "일원분산분석 ANOVA",
         "상관분석",
-        "교차분석 (카이제곱)"
+        "교차분석 (카이제곱)",
+        "비모수: Mann-Whitney U (독립 2집단)",
+        "비모수: Wilcoxon (대응 2집단)",
+        "비모수: Kruskal-Wallis (독립 3집단↑)",
     ]
 )
+
+# ------------------------------------------------------------
+# 비모수 검정 안내
+# ------------------------------------------------------------
+# t검정·ANOVA는 정규성을 가정합니다. 가정 검정에서 "정규분포 아님"이
+# 나오면 평균 대신 순위(중앙값 경향)를 비교하는 비모수 검정이 더 안전합니다.
+# ------------------------------------------------------------
+if test_type.startswith("비모수"):
+    st.caption(
+        "비모수 검정은 데이터가 정규분포를 따르지 않을 때(또는 표본이 작을 때) "
+        "평균 대신 순위를 비교하는 방법입니다. 모수 검정의 가정 검정에서 "
+        "정규성이 깨졌다면 같은 짝의 비모수 검정을 사용하세요."
+    )
 
 
 # ------------------------------------------------------------
@@ -656,8 +672,9 @@ elif test_type == "일원분산분석 ANOVA":
         else:
             st.warning(
                 "정규성 가정을 만족하지 않는 집단이 있습니다. "
-                "현재 함수는 참고용으로 Welch ANOVA 결과를 표시합니다. "
-                "엄밀한 비모수 검정은 추후 Kruskal-Wallis 검정으로 확장할 수 있습니다."
+                "아래는 참고용 Welch ANOVA 결과입니다. "
+                "정규성이 깨졌을 때는 위 검정 선택에서 "
+                "**'비모수: Kruskal-Wallis (독립 3집단↑)'** 를 사용하는 것이 더 안전합니다."
             )
 
         # ------------------------------------------------------------
@@ -997,6 +1014,202 @@ elif test_type == "교차분석 (카이제곱)":
             "title": f"통계 분석 - 교차분석 ({row_column} × {col_column})",
             "table": observed.reset_index(),
             "text": chi_interpretation,
+        }
+
+
+# ------------------------------------------------------------
+# 12. 비모수: Mann-Whitney U (독립 2집단)
+# ------------------------------------------------------------
+# 독립표본 T-TEST의 비모수 버전입니다.
+# 정규성을 가정하지 않고 두 집단의 분포(중앙값 경향) 차이를 봅니다.
+# ------------------------------------------------------------
+elif test_type == "비모수: Mann-Whitney U (독립 2집단)":
+    st.subheader("Mann-Whitney U 검정 (독립 2집단)")
+
+    if not categorical_columns:
+        st.warning("집단을 나눌 범주형 컬럼이 없습니다.")
+        st.stop()
+
+    group_column = st.selectbox(
+        "집단을 나눌 범주형 컬럼을 선택하세요",
+        categorical_columns,
+        key="mwu_group_column",
+    )
+
+    group_values = data[group_column].dropna().unique().tolist()
+
+    selected_groups = st.multiselect(
+        "비교할 두 집단을 선택하세요",
+        group_values,
+        default=group_values[:2],
+        key="mwu_groups",
+    )
+
+    value_column = st.selectbox(
+        "비교할 숫자형 변수를 선택하세요",
+        numeric_columns,
+        key="mwu_value_column",
+    )
+
+    st.info(
+        "Mann-Whitney U 검정은 독립표본 T-TEST의 비모수 버전입니다. "
+        "정규성을 가정하지 않고 두 집단의 분포(중앙값 경향) 차이를 확인합니다."
+    )
+
+    if len(selected_groups) != 2:
+        st.warning("비교할 집단을 정확히 2개 선택해주세요.")
+
+    elif st.button("Mann-Whitney U 검정 실행"):
+        try:
+            result, interpretation = my_stats.mannwhitney_for_app(
+                stats_data,
+                group_column=group_column,
+                value_column=value_column,
+                groups=selected_groups,
+                alpha=alpha,
+            )
+        except Exception as error:
+            st.error(f"검정을 수행할 수 없습니다: {error}")
+            st.stop()
+
+        st.subheader("검정 결과")
+        st.dataframe(result, use_container_width=True, hide_index=True)
+
+        st.subheader("결과 해석")
+        st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - Mann-Whitney U 검정",
+            "table": result,
+            "text": interpretation,
+        }
+
+
+# ------------------------------------------------------------
+# 13. 비모수: Wilcoxon 부호순위 (대응 2집단)
+# ------------------------------------------------------------
+# 대응표본 T-TEST의 비모수 버전입니다.
+# ------------------------------------------------------------
+elif test_type == "비모수: Wilcoxon (대응 2집단)":
+    st.subheader("Wilcoxon 부호순위 검정 (대응 2집단)")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        before_column = st.selectbox(
+            "비교할 첫 번째 숫자형 변수를 선택하세요",
+            numeric_columns,
+            key="wilcoxon_before",
+        )
+
+    with col2:
+        after_column = st.selectbox(
+            "비교할 두 번째 숫자형 변수를 선택하세요",
+            numeric_columns,
+            index=1 if len(numeric_columns) > 1 else 0,
+            key="wilcoxon_after",
+        )
+
+    st.info(
+        "Wilcoxon 부호순위 검정은 대응표본 T-TEST의 비모수 버전입니다. "
+        "같은 대상에서 측정한 두 값의 차이를 순위 기반으로 비교합니다."
+    )
+
+    if before_column == after_column:
+        st.warning("서로 다른 두 숫자형 변수를 선택해주세요.")
+
+    elif st.button("Wilcoxon 검정 실행"):
+        try:
+            result, interpretation = my_stats.wilcoxon_for_app(
+                stats_data,
+                before_column=before_column,
+                after_column=after_column,
+                alpha=alpha,
+            )
+        except Exception as error:
+            st.error(f"검정을 수행할 수 없습니다: {error}")
+            st.stop()
+
+        st.subheader("검정 결과")
+        st.dataframe(result, use_container_width=True, hide_index=True)
+
+        st.subheader("결과 해석")
+        st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - Wilcoxon 부호순위 검정",
+            "table": result,
+            "text": interpretation,
+        }
+
+
+# ------------------------------------------------------------
+# 14. 비모수: Kruskal-Wallis (독립 3집단 이상)
+# ------------------------------------------------------------
+# 일원분산분석 ANOVA의 비모수 버전입니다.
+# ------------------------------------------------------------
+elif test_type == "비모수: Kruskal-Wallis (독립 3집단↑)":
+    st.subheader("Kruskal-Wallis 검정 (독립 3집단 이상)")
+
+    if not categorical_columns:
+        st.warning("집단을 나눌 범주형 컬럼이 없습니다.")
+        st.stop()
+
+    group_column = st.selectbox(
+        "집단을 나눌 범주형 컬럼을 선택하세요",
+        categorical_columns,
+        key="kruskal_group_column",
+    )
+
+    value_column = st.selectbox(
+        "비교할 숫자형 변수를 선택하세요",
+        numeric_columns,
+        key="kruskal_value_column",
+    )
+
+    group_values = data[group_column].dropna().unique().tolist()
+
+    selected_groups = st.multiselect(
+        "분석에 포함할 집단을 선택하세요",
+        group_values,
+        default=group_values[:min(5, len(group_values))],
+        key="kruskal_groups",
+    )
+
+    st.info(
+        "Kruskal-Wallis 검정은 일원분산분석 ANOVA의 비모수 버전입니다. "
+        "정규성을 가정하지 않고 3개 이상 집단의 분포 차이를 확인합니다."
+    )
+
+    if len(selected_groups) < 3:
+        st.warning("Kruskal-Wallis 검정은 최소 3개 이상의 집단이 필요합니다.")
+
+    elif st.button("Kruskal-Wallis 검정 실행"):
+        try:
+            summary, result, interpretation = my_stats.kruskal_for_app(
+                stats_data,
+                group_column=group_column,
+                value_column=value_column,
+                groups=selected_groups,
+                alpha=alpha,
+            )
+        except Exception as error:
+            st.error(f"검정을 수행할 수 없습니다: {error}")
+            st.stop()
+
+        st.subheader("집단별 요약")
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+        st.subheader("검정 결과")
+        st.dataframe(result, use_container_width=True, hide_index=True)
+
+        st.subheader("결과 해석")
+        st.info(interpretation)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - Kruskal-Wallis 검정",
+            "table": result,
+            "text": interpretation,
         }
 
 

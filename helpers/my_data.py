@@ -293,61 +293,129 @@ def read_csv_auto(uploaded_file):
     """
     여러 인코딩을 차례대로 시도해서 CSV 파일을 읽습니다.
 
+    한국 공공데이터 CSV는 인코딩(utf-8/cp949/euc-kr)과 형식이 제각각이고,
+    엑셀/특정 도구에서 내보낸 'BOM 없는 UTF-16', 세미콜론·탭 구분자도 흔합니다.
+    그래서 다양한 인코딩 + 구분자 자동탐지까지 시도합니다.
+
     Returns:
         DataFrame: 읽은 데이터
-        str: 사용된 인코딩
+        str: 사용된 인코딩 설명
     """
 
     file_bytes = uploaded_file.getvalue()
 
-    # 파일의 시작 부분을 확인해 우선순위 결정
+    # BOM으로 인코딩을 먼저 확정할 수 있으면 그것만 시도합니다.
     if file_bytes.startswith(b"\xef\xbb\xbf"):
-        encodings = [
-            "utf-8-sig",
-            "utf-8",
-            "cp949",
-            "euc-kr",
-            "utf-16"
-        ]
-
+        encodings = ["utf-8-sig"]
     elif file_bytes.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings = ["utf-16"]
+    else:
+        # BOM이 없으면 후보를 넓게 시도합니다.
+        # - utf-16-le/be : BOM 없는 UTF-16 (엑셀 'Unicode Text' 등에서 발생)
+        # - cp1252       : 서유럽권 인코딩
         encodings = [
-            "utf-16",
             "utf-8-sig",
             "utf-8",
             "cp949",
-            "euc-kr"
-        ]
-
-    else:
-        encodings = [
-            "utf-8",
-            "cp949",
             "euc-kr",
-            "utf-16"
+            "utf-16",
+            "utf-16-le",
+            "utf-16-be",
+            "cp1252",
         ]
 
-    last_error = None
+    errors = []
 
     for encoding in encodings:
+        # 1) 먼저 바이트를 텍스트로 디코딩합니다.
         try:
-            data = pd.read_csv(
-                BytesIO(file_bytes),
-                encoding=encoding
-            )
+            text = file_bytes.decode(encoding)
+        except (UnicodeError, LookupError) as error:
+            errors.append(f"{encoding}: {type(error).__name__}")
+            continue
 
-            return data, encoding
+        # 2) 텍스트에서 '진짜 표가 시작되는 헤더 줄'을 찾아 읽습니다.
+        #    (공공데이터 CSV의 앞쪽 검색조건·메타데이터 줄을 자동으로 건너뜀)
+        try:
+            data, note = _read_csv_text(text)
+        except Exception as error:
+            errors.append(f"{encoding}: {type(error).__name__}")
+            continue
 
-        except (
-            UnicodeError,
-            pd.errors.ParserError
-        ) as error:
-            last_error = error
+        if data is not None and data.shape[1] >= 1 and data.shape[0] >= 1:
+            label = encoding if not note else f"{encoding} ({note})"
+            return data, label
 
     raise ValueError(
-        "지원하는 인코딩으로 CSV 파일을 읽을 수 없습니다. "
-        f"마지막 오류: {last_error}"
+        "CSV 파일을 읽을 수 없습니다. 파일이 손상됐거나 지원하지 않는 형식일 수 있어요. "
+        "엑셀에서 열어 'CSV UTF-8(쉼표로 분리)'로 다시 저장한 뒤 올려보세요.\n"
+        f"(시도한 인코딩: {', '.join(errors)})"
     )
+
+
+def _read_csv_text(text):
+    """
+    CSV 텍스트에서 실제 표가 시작되는 헤더 줄을 추정해 DataFrame으로 읽습니다.
+
+    공공데이터 CSV는 표 위에 '검색조건', '제공기관' 같은 메타데이터 줄이
+    여러 개 붙어 있는 경우가 많습니다. 각 줄의 '열(필드) 개수'를 세어
+    가장 흔한 열 수(= 표의 너비)를 찾고, 그 너비가 처음 등장하는 줄을
+    헤더로 보고 그 위 줄들은 건너뜁니다.
+
+    Returns:
+        (DataFrame, note) — note는 머리말을 건너뛴 경우 안내 문자열
+    """
+    import csv
+    from io import StringIO
+    from collections import Counter
+
+    rows = list(csv.reader(StringIO(text)))
+
+    # 내용이 있는 줄들의 필드 개수만 모읍니다.
+    field_counts = [len(r) for r in rows if any(str(c).strip() for c in r)]
+    if not field_counts:
+        raise ValueError("내용이 없는 CSV입니다.")
+
+    # 2개 이상 열을 가진 줄들 중 가장 자주 나오는 너비를 표의 열 수로 봅니다.
+    width_counter = Counter(c for c in field_counts if c >= 2)
+    dominant_width = (
+        max(width_counter.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        if width_counter else max(field_counts)
+    )
+
+    # 그 너비가 처음 나타나는 줄을 헤더로 봅니다(그 위는 머리말).
+    header_index = 0
+    for i, r in enumerate(rows):
+        if len(r) == dominant_width and any(str(c).strip() for c in r):
+            header_index = i
+            break
+
+    # 헤더 줄부터 다시 읽습니다. thousands=','로 "22,776" 같은 천단위 숫자도 인식.
+    data = pd.read_csv(
+        StringIO(text),
+        skiprows=header_index,
+        skip_blank_lines=True,
+        thousands=",",
+    )
+
+    data = _clean_loaded_columns(data)
+
+    note = f"머리말 {header_index}줄 건너뜀" if header_index > 0 else ""
+    return data, note
+
+
+def _clean_loaded_columns(data):
+    """컬럼명 공백을 정리하고, 줄 끝 쉼표로 생긴 빈 'Unnamed' 컬럼을 제거합니다."""
+    data = data.rename(columns=lambda c: str(c).strip())
+
+    drop_columns = [
+        column for column in data.columns
+        if str(column).startswith("Unnamed") and data[column].isna().all()
+    ]
+    if drop_columns:
+        data = data.drop(columns=drop_columns)
+
+    return data
 
 
 #====================
@@ -548,3 +616,126 @@ def correlation_overview(data, top_n=8, min_abs=0.3):
         insight = "\n\n".join(lines)
 
     return ranked, insight
+
+
+# ============================================================
+# 시계열 분석 도우미
+# ============================================================
+# 날짜 컬럼을 기준으로 데이터를 기간별로 묶고(리샘플링), 흐름과 추세를
+# 보기 쉽게 정리합니다. 가장 흔한 실무 데이터가 시계열입니다.
+# ============================================================
+
+# 화면에 보여줄 기간 이름 → pandas resample 규칙(rule) 매핑입니다.
+# pandas 3.x 권장 alias를 사용합니다(ME=월말, QE=분기말, YE=연말).
+RESAMPLE_RULES = {
+    "일별": "D",
+    "주별": "W",
+    "월별": "ME",
+    "분기별": "QE",
+    "연별": "YE",
+}
+
+
+def detect_datetime_columns(data):
+    """이미 datetime 타입인 컬럼 이름 목록을 반환합니다."""
+    return data.select_dtypes(include=["datetime", "datetimetz"]).columns.tolist()
+
+
+def resample_timeseries(data, date_column, value_column, period="월별", agg="평균"):
+    """
+    날짜 컬럼을 기준으로 값 컬럼을 기간별로 집계(리샘플링)합니다.
+
+    Args:
+        data (DataFrame): 원본 데이터
+        date_column (str): 날짜로 사용할 컬럼(자동으로 datetime 변환)
+        value_column (str): 집계할 숫자형 컬럼
+        period (str): "일별" / "주별" / "월별" / "분기별" / "연별"
+        agg (str): "평균" / "합계" / "건수"
+
+    Returns:
+        DataFrame: [date_column, value_column] 기간별 집계 결과(시간순 정렬)
+    """
+    rule = RESAMPLE_RULES.get(period, "ME")
+    agg_func = {"평균": "mean", "합계": "sum", "건수": "count"}.get(agg, "mean")
+
+    df = data[[date_column, value_column]].copy()
+    df[date_column] = pd.to_datetime(df[date_column], errors="coerce")
+
+    # 날짜 변환에 실패한 행은 제외합니다.
+    df = df.dropna(subset=[date_column])
+
+    # 건수는 '기간별 행 개수'이므로 값 컬럼의 타입과 무관합니다.
+    # 평균·합계일 때만 값 컬럼을 숫자로 바꾸고 빈 값을 제외합니다.
+    if agg_func != "count":
+        df[value_column] = pd.to_numeric(df[value_column], errors="coerce")
+        df = df.dropna(subset=[value_column])
+
+    if df.empty:
+        raise ValueError("날짜로 변환 가능한 데이터가 없습니다. 다른 컬럼을 선택해주세요.")
+
+    resampler = df.set_index(date_column).resample(rule)
+
+    if agg_func == "count":
+        # size()는 값이 비어 있어도 행 수를 세므로 '건수'에 적합합니다.
+        resampled = resampler.size().reset_index(name=value_column)
+    else:
+        resampled = resampler[value_column].agg(agg_func).reset_index()
+
+    return resampled
+
+
+def add_moving_average(ts_df, value_column, window=3, ma_column="이동평균"):
+    """시계열 집계 결과에 이동평균(rolling mean) 컬럼을 추가합니다.
+
+    이동평균은 짧은 변동(노이즈)을 부드럽게 만들어 추세를 보기 쉽게 합니다.
+    """
+    result = ts_df.copy()
+    result[ma_column] = (
+        result[value_column].rolling(window=window, min_periods=1).mean()
+    )
+    return result
+
+
+def timeseries_trend_insight(ts_df, date_column, value_column):
+    """시계열의 전반적인 추세를 1차 회귀 기울기로 판단해 해석 문장을 만듭니다."""
+    series = ts_df[[date_column, value_column]].dropna()
+
+    if len(series) < 3:
+        return "추세를 판단하기에 데이터 구간이 너무 적습니다."
+
+    # 시간 순서를 0,1,2,... 정수 축으로 바꿔 기울기를 계산합니다.
+    x = np.arange(len(series))
+    y = series[value_column].to_numpy(dtype=float)
+
+    slope = np.polyfit(x, y, 1)[0]
+
+    first_value = y[0]
+    last_value = y[-1]
+    start_label = series[date_column].iloc[0]
+    end_label = series[date_column].iloc[-1]
+
+    # 변화율(%)은 시작값이 0이 아닐 때만 계산합니다.
+    if first_value != 0:
+        change_pct = (last_value - first_value) / abs(first_value) * 100
+        change_text = f" (시작 대비 약 {change_pct:+.1f}%)"
+    else:
+        change_text = ""
+
+    if slope > 0:
+        trend = "전반적으로 **증가**하는 추세"
+    elif slope < 0:
+        trend = "전반적으로 **감소**하는 추세"
+    else:
+        trend = "뚜렷한 추세가 없는 흐름"
+
+    try:
+        start_str = pd.Timestamp(start_label).date()
+        end_str = pd.Timestamp(end_label).date()
+    except Exception:
+        start_str, end_str = start_label, end_label
+
+    return (
+        f"`{value_column}`는 {start_str}부터 {end_str}까지 {trend}를 보입니다"
+        f"{change_text}. 이동평균선을 함께 보면 단기 변동을 걷어낸 흐름을 더 명확히 볼 수 있어요. "
+        "⚠️ 과거 추세가 미래에도 이어진다는 보장은 없으니 예측에는 주의하세요."
+    )

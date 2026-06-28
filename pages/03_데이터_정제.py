@@ -159,7 +159,9 @@ cleaning_options = st.multiselect(
         "컬럼명 변경",
         "데이터 타입 변경",
         "날짜 파생변수 생성",
-        "여러 컬럼을 하나로 합치기 (wide → long)"
+        "여러 컬럼을 하나로 합치기 (wide → long)",
+        "숫자형 구간화 (binning)",
+        "숫자형 정규화 / 스케일링"
     ]
 )
 
@@ -876,7 +878,245 @@ if "여러 컬럼을 하나로 합치기 (wide → long)" in cleaning_options:
 
 
 # ------------------------------------------------------------
-# 12. 정제 결과 영역
+# 12. 숫자형 구간화 (binning)
+# ------------------------------------------------------------
+# 연속형 숫자를 몇 개의 구간(범주)으로 묶습니다.
+# 예: 나이 → 연령대(10대/20대/...), 매출 → 하/중/상
+#
+# - 같은 너비로 나누기(cut): 값의 범위를 N등분 (예: 0~100을 4등분)
+# - 같은 개수로 나누기(qcut): 각 구간에 비슷한 개수가 들어가도록 분위수로 나눔
+#
+# 구간화하면 분포가 한쪽에 쏠린 변수도 그룹별 비교/교차분석에 쓰기 쉬워집니다.
+# ------------------------------------------------------------
+if "숫자형 구간화 (binning)" in cleaning_options:
+    st.subheader("숫자형 구간화 (binning)")
+
+    st.caption(
+        "연속형 숫자를 몇 개의 구간(범주)으로 묶습니다. "
+        "예: 나이 → 연령대, 매출 → 하/중/상. 그룹별 비교나 교차분석에 활용하기 좋아집니다."
+    )
+
+    numeric_columns_for_bin = cleaned_data.select_dtypes(
+        include="number"
+    ).columns.tolist()
+
+    if not numeric_columns_for_bin:
+        st.warning("구간화할 숫자형 컬럼이 없습니다.")
+
+    else:
+        bin_column = st.selectbox(
+            "구간화할 숫자형 컬럼을 선택하세요",
+            numeric_columns_for_bin,
+            key="bin_column",
+        )
+
+        bin_method = st.radio(
+            "구간화 방법",
+            ["같은 너비로 나누기 (cut)", "같은 개수로 나누기 (qcut)"],
+            key="bin_method",
+            help=(
+                "같은 너비: 값의 범위를 똑같은 폭으로 나눕니다(분포가 쏠리면 한 구간에 몰릴 수 있음). "
+                "같은 개수: 각 구간에 비슷한 개수가 들어가도록 분위수로 나눕니다."
+            ),
+        )
+
+        bin_count = st.number_input(
+            "구간 개수",
+            min_value=2,
+            max_value=10,
+            value=4,
+            key="bin_count",
+        )
+
+        new_bin_column = st.text_input(
+            "새로 만들 구간 컬럼 이름",
+            value=f"{bin_column}_구간",
+            key="new_bin_column",
+        )
+
+        use_custom_labels = st.checkbox(
+            "구간 이름을 직접 지정 (예: 하,중상,상)",
+            key="use_custom_labels",
+        )
+
+        custom_labels = None
+        if use_custom_labels:
+            labels_text = st.text_input(
+                f"{bin_count}개의 구간 이름을 쉼표로 구분해 입력하세요",
+                key="custom_labels_text",
+            )
+            if labels_text.strip():
+                custom_labels = [
+                    label.strip() for label in labels_text.split(",")
+                    if label.strip()
+                ]
+
+        # 이름 충돌/라벨 개수 검증
+        name_exists = new_bin_column in cleaned_data.columns
+        labels_count_ok = (
+            custom_labels is None or len(custom_labels) == int(bin_count)
+        )
+
+        if not new_bin_column.strip():
+            st.info("새 구간 컬럼 이름을 입력해주세요.")
+        elif name_exists:
+            st.warning(f"이미 존재하는 컬럼명입니다: {new_bin_column}")
+        elif use_custom_labels and not labels_count_ok:
+            st.warning(
+                f"구간 이름 개수({0 if custom_labels is None else len(custom_labels)}개)가 "
+                f"구간 개수({int(bin_count)}개)와 같아야 합니다."
+            )
+        else:
+            apply_binning = st.checkbox(
+                "구간화 적용",
+                key="apply_binning",
+            )
+
+            if apply_binning:
+                try:
+                    if bin_method.startswith("같은 너비"):
+                        binned = pd.cut(
+                            cleaned_data[bin_column],
+                            bins=int(bin_count),
+                            labels=custom_labels,
+                        )
+                    else:
+                        binned = pd.qcut(
+                            cleaned_data[bin_column],
+                            q=int(bin_count),
+                            labels=custom_labels,
+                            duplicates="drop",
+                        )
+
+                    cleaned_data[new_bin_column] = binned.astype("object")
+
+                    cleaning_applied = True
+                    applied_steps.append(
+                        f"숫자형 구간화: {bin_column} → {new_bin_column}"
+                    )
+
+                    st.success(f"`{new_bin_column}` 구간 컬럼을 생성했습니다.")
+
+                    st.write("구간별 개수")
+                    st.dataframe(
+                        cleaned_data[new_bin_column]
+                        .value_counts(dropna=False)
+                        .rename_axis(new_bin_column)
+                        .reset_index(name="개수"),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                except Exception as error:
+                    st.error(
+                        "구간화에 실패했습니다. 고유값이 너무 적거나 한쪽에 쏠린 컬럼일 수 있습니다. "
+                        f"(상세: {error})"
+                    )
+
+
+# ------------------------------------------------------------
+# 13. 숫자형 정규화 / 스케일링
+# ------------------------------------------------------------
+# 단위·범위가 제각각인 숫자 변수를 비슷한 척도로 맞춥니다.
+# 변수마다 단위가 다르면(예: 나이 0~100 vs 소득 0~1억) 거리·계수 비교가
+# 한쪽으로 쏠립니다. 스케일링은 이를 공정하게 맞춰줍니다.
+#
+# - Min-Max(0~1): 최솟값 0, 최댓값 1로 압축. (이상치에 민감)
+# - 표준화(Z-점수): 평균 0, 표준편차 1로 변환. (분포 모양 유지)
+#
+# sklearn 없이 pandas/numpy로 직접 계산합니다(배포 의존성 최소화 + 식이 명확).
+# ------------------------------------------------------------
+if "숫자형 정규화 / 스케일링" in cleaning_options:
+    st.subheader("숫자형 정규화 / 스케일링")
+
+    st.caption(
+        "단위·범위가 다른 숫자 변수를 같은 척도로 맞춥니다. "
+        "변수 간 크기 비교, 거리 기반 분석, 회귀 계수 비교 등에 도움이 됩니다."
+    )
+
+    numeric_columns_for_scale = cleaned_data.select_dtypes(
+        include="number"
+    ).columns.tolist()
+
+    if not numeric_columns_for_scale:
+        st.warning("스케일링할 숫자형 컬럼이 없습니다.")
+
+    else:
+        scale_columns = st.multiselect(
+            "스케일링할 숫자형 컬럼을 선택하세요",
+            numeric_columns_for_scale,
+            key="scale_columns",
+        )
+
+        scale_method = st.radio(
+            "스케일링 방법",
+            ["Min-Max (0~1)", "표준화 (Z-점수)"],
+            key="scale_method",
+            help=(
+                "Min-Max: 최솟값 0, 최댓값 1로 압축(이상치에 민감). "
+                "표준화: 평균 0, 표준편차 1로 변환(분포 모양 유지)."
+            ),
+        )
+
+        keep_original = st.checkbox(
+            "원본 컬럼은 그대로 두고 새 컬럼으로 추가",
+            value=True,
+            key="scale_keep_original",
+            help="체크 해제하면 원본 컬럼 값을 직접 덮어씁니다.",
+        )
+
+        if scale_columns:
+            apply_scaling = st.checkbox(
+                "스케일링 적용",
+                key="apply_scaling",
+            )
+
+            if apply_scaling:
+                suffix = "_minmax" if scale_method.startswith("Min-Max") else "_zscore"
+                made_columns = []
+                skipped_columns = []
+
+                for column in scale_columns:
+                    series = cleaned_data[column].astype(float)
+
+                    if scale_method.startswith("Min-Max"):
+                        col_min = series.min()
+                        col_max = series.max()
+                        # 최솟값과 최댓값이 같으면(상수 컬럼) 나눗셈이 불가합니다.
+                        if col_max == col_min:
+                            skipped_columns.append(column)
+                            continue
+                        scaled = (series - col_min) / (col_max - col_min)
+                    else:
+                        col_mean = series.mean()
+                        col_std = series.std()
+                        if col_std == 0:
+                            skipped_columns.append(column)
+                            continue
+                        scaled = (series - col_mean) / col_std
+
+                    target_column = f"{column}{suffix}" if keep_original else column
+                    cleaned_data[target_column] = scaled
+                    made_columns.append(target_column)
+
+                if made_columns:
+                    cleaning_applied = True
+                    applied_steps.append(
+                        f"숫자형 스케일링({scale_method}): {', '.join(scale_columns)}"
+                    )
+                    st.success(
+                        f"{len(made_columns)}개 컬럼을 스케일링했습니다: {', '.join(made_columns)}"
+                    )
+
+                if skipped_columns:
+                    st.warning(
+                        "값이 모두 같아(상수) 스케일링할 수 없는 컬럼은 건너뛰었습니다: "
+                        + ", ".join(skipped_columns)
+                    )
+
+
+# ------------------------------------------------------------
+# 14. 정제 결과 영역
 # ------------------------------------------------------------
 # 사용자가 실제로 정제 작업을 적용한 경우에만 결과를 보여줍니다.
 #

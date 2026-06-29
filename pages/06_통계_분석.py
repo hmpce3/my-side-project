@@ -142,10 +142,6 @@ test_type = st.selectbox(
         "이원분산분석 ANOVA",
         "상관분석",
         "다중 상관분석",
-        "교차분석 (카이제곱)",
-        "비모수: Mann-Whitney U (독립 2집단)",
-        "비모수: Wilcoxon (대응 2집단)",
-        "비모수: Kruskal-Wallis (독립 3집단↑)",
     ]
 )
 

@@ -323,6 +323,20 @@ if uploaded_files:
         summary_text, recommendation_table, recommendation_notes = (
             my_data.recommend_analysis_flow(data)
         )
+        feedback_pages = {
+            "데이터 품질 점검",
+            "데이터 정제",
+            "자동 시각화",
+            "직접 시각화",
+            "그룹별 집계",
+            "통계 분석",
+            "보고서",
+        }
+        if not recommendation_table.empty and "추천 페이지" in recommendation_table.columns:
+            recommendation_table = recommendation_table[
+                recommendation_table["추천 페이지"].isin(feedback_pages)
+            ].reset_index(drop=True)
+            recommendation_table["순서"] = range(1, len(recommendation_table) + 1)
     except Exception as error:
         summary_text = ""
         recommendation_table = pd.DataFrame()
@@ -338,7 +352,7 @@ if uploaded_files:
     )
 
     if not recommendation_table.empty:
-        st.subheader("추천 분석 흐름")
+        st.subheader("기본 분석 흐름 제안")
         st.write(summary_text)
 
         st.dataframe(
@@ -351,7 +365,7 @@ if uploaded_files:
             for note in recommendation_notes:
                 st.warning(note)
 
-        st.caption("추천은 데이터 구조를 기준으로 만든 안내입니다. 분석 목적에 따라 순서를 바꿔도 됩니다.")
+        st.caption("이 흐름은 데이터 구조를 기준으로 만든 기본 안내입니다. 실제 분석 목적에 따라 순서를 바꿔도 됩니다.")
 
         def go(page_name):
             st.session_state["nav"] = page_name

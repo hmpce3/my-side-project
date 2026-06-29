@@ -537,56 +537,49 @@ def recommend_analysis_flow(data):
 
     add(
         "데이터 상태 먼저 확인",
-        f"{row_count:,}행, {column_count:,}열 데이터입니다. 결측치·중복·타입을 먼저 확인하면 이후 분석 오류를 줄일 수 있습니다.",
+        f"{row_count:,}행, {column_count:,}열 데이터입니다. 분석 전에 결측치, 중복, 데이터 타입을 확인해야 이후 결과를 더 믿을 수 있습니다.",
         "데이터 품질 점검",
     )
 
     if missing_cells > 0 or duplicate_rows > 0:
         add(
             "정제 후 분석",
-            f"결측치 {missing_cells:,}개, 중복 행 {duplicate_rows:,}개가 있습니다. 필요한 처리 후 분석하는 것을 권장합니다.",
+            f"결측치 {missing_cells:,}개와 중복 행 {duplicate_rows:,}개가 확인됩니다. 분석에 사용할 기준을 정하고 필요한 정제를 먼저 하는 것이 좋습니다.",
             "데이터 정제",
         )
     elif column_count >= 1:
         add(
-            "필요한 컬럼만 가볍게 정리",
-            "큰 문제는 없어 보이지만, 날짜 타입 변경이나 불필요한 컬럼 삭제를 해두면 분석이 더 편해집니다.",
+            "분석에 필요한 컬럼 정리",
+            "큰 문제는 없어 보이지만, 분석 목적과 관련 없는 컬럼을 정리하면 표와 그래프를 더 명확하게 만들 수 있습니다.",
             "데이터 정제",
         )
 
     if date_candidates and numeric_columns:
         add(
-            "시간 흐름 분석",
-            f"날짜 후보({', '.join(map(str, date_candidates[:3]))})와 숫자형 변수 {len(numeric_columns)}개가 있어 추세·이동평균 분석이 가능합니다.",
-            "시계열 분석",
+            "날짜 기준 집계 검토",
+            f"날짜 후보({', '.join(map(str, date_candidates[:3]))})가 있어 월별·일별처럼 기간 기준으로 묶어 비교할 수 있습니다.",
+            "그룹별 집계",
         )
 
     if categorical_columns and numeric_columns:
         add(
             "그룹별 차이 비교",
-            f"범주형 변수 {len(categorical_columns)}개와 숫자형 변수 {len(numeric_columns)}개가 있어 그룹별 평균·합계 비교가 가능합니다.",
+            f"범주형 변수 {len(categorical_columns)}개와 숫자형 변수 {len(numeric_columns)}개가 있어 그룹별 평균, 합계, 중앙값 차이를 비교할 수 있습니다.",
             "그룹별 집계",
         )
 
     if len(numeric_columns) >= 2:
         add(
             "변수 간 관계 확인",
-            f"숫자형 변수가 {len(numeric_columns)}개 있어 상관분석이나 회귀분석으로 관계를 확인할 수 있습니다.",
+            f"숫자형 변수가 {len(numeric_columns)}개 있어 산점도와 상관분석으로 변수들이 함께 움직이는지 확인할 수 있습니다.",
             "통계 분석",
-        )
-
-    if len(numeric_columns) >= 2 and row_count >= 30:
-        add(
-            "설명/예측 모델 검토",
-            "표본 수와 숫자형 변수가 충분해 보입니다. 종속변수와 설명변수를 정해 회귀분석을 시도할 수 있습니다.",
-            "회귀분석",
         )
 
     if len(categorical_columns) >= 2:
         add(
-            "범주형 변수 관계 확인",
-            f"범주형 변수가 {len(categorical_columns)}개 있어 교차표와 카이제곱 검정으로 관계를 볼 수 있습니다.",
-            "통계 분석",
+            "범주형 분포 비교",
+            f"범주형 변수가 {len(categorical_columns)}개 있어 교차표나 그룹별 집계로 범주 조합별 분포 차이를 확인할 수 있습니다.",
+            "그룹별 집계",
         )
 
     add(
@@ -606,17 +599,17 @@ def recommend_analysis_flow(data):
         )
     if len(numeric_columns) == 0:
         notes.append(
-            "숫자형 컬럼이 없어 통계·회귀·시계열 값 분석이 제한됩니다. 숫자로 보이는 컬럼은 데이터 정제에서 숫자형으로 바꿔보세요."
+            "숫자형 컬럼이 없어 평균, 합계, 상관분석 같은 숫자 기반 분석이 제한됩니다. 숫자로 보이는 컬럼은 데이터 정제에서 숫자형으로 바꿔보세요."
         )
     if not date_candidates:
         notes.append(
-            "날짜 컬럼이 뚜렷하지 않습니다. 시간 흐름을 보고 싶다면 날짜 컬럼을 날짜형으로 변환해야 합니다."
+            "날짜 컬럼이 뚜렷하지 않습니다. 기간별 비교가 필요하다면 날짜 컬럼을 날짜형으로 변환해야 합니다."
         )
 
     summary = (
-        f"이 데이터는 {row_count:,}행, {column_count:,}열입니다. "
+        f"업로드한 데이터는 {row_count:,}행, {column_count:,}열입니다. "
         f"숫자형 {len(numeric_columns)}개, 범주형 {len(categorical_columns)}개, "
-        f"날짜 후보 {len(date_candidates)}개를 찾았습니다."
+        f"날짜 후보 {len(date_candidates)}개를 기준으로 기본 분석 흐름을 제안합니다."
     )
 
     return summary, DataFrame(recommendations), notes

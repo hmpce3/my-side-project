@@ -45,6 +45,25 @@ st.set_page_config(
 )
 
 
+def show_analysis_basis(title, question, rationale, criteria, caution=None):
+    """도서관 화면마다 분석 질문·근거·판단 기준을 같은 형식으로 보여줍니다."""
+    text = (
+        f"[분석 질문]\n{question}\n\n"
+        f"[분석 근거]\n{rationale}\n\n"
+        f"[판단 기준]\n{criteria}"
+    )
+    if caution:
+        text += f"\n\n[해석 주의]\n{caution}"
+
+    with st.expander(f"분석 근거 · {title}", expanded=True):
+        st.markdown(f"**분석 질문**  \n{question}")
+        st.markdown(f"**왜 이 변수와 지표를 보나요?**  \n{rationale}")
+        st.markdown(f"**판단 기준**  \n{criteria}")
+        if caution:
+            st.caption(f"해석 주의: {caution}")
+    return text
+
+
 # 샘플(실제) 데이터는 매번 다시 읽으면 느리므로 한 번만 읽어 캐시합니다.
 @st.cache_data(show_spinner="샘플 데이터를 불러오는 중...")
 def load_sample_collection():
@@ -201,6 +220,19 @@ if section == "개요 · 핵심 지표":
         """
     )
 
+    show_analysis_basis(
+        title="도서관 운영 진단의 출발점",
+        question="제한된 예산과 공간 안에서 어떤 장서를 우선 보강하거나 재배치해야 하는가?",
+        rationale=(
+            "`도서권수`는 도서관이 보유한 공급을, `대출건수`는 실제 이용자 수요를 나타냅니다. "
+            "두 값을 함께 보면 단순히 책이 많은 분야가 아니라, 많이 찾는 분야와 부족한 분야를 구분할 수 있습니다."
+        ),
+        criteria=(
+            "핵심 지표에서는 전체 규모를 먼저 확인하고, 세부 진단에서는 분야·독자대상별 공급비중과 수요비중을 비교합니다."
+        ),
+        caution="대출이 적은 분야가 곧 불필요하다는 뜻은 아니며, 공공성·지역 특성·장서 보존 가치도 함께 고려해야 합니다.",
+    )
+
     st.subheader("핵심 지표")
     kpis = metrics.compute_loan_kpis(data)
 
@@ -223,6 +255,20 @@ elif section == "장서 진단 · 의사결정":
     st.caption(
         "이 도서관의 공급(장서 구성)과 수요(대출)를 비교해, "
         "보강(수서)·정리 후보를 자동으로 진단합니다."
+    )
+
+    gap_basis = show_analysis_basis(
+        title="장서 수급 격차 분석",
+        question="우리 도서관의 장서 구성은 실제 대출 수요와 균형을 이루고 있는가?",
+        rationale=(
+            "`주제분류번호`와 `부가기호`는 책을 분야와 독자대상으로 나누기 위한 기준 변수입니다. "
+            "`도서권수`는 공급, `대출건수`는 수요로 보고 두 비중의 차이를 계산합니다."
+        ),
+        criteria=(
+            "`수요비중 - 공급비중`이 양수이면 수요 대비 장서가 부족한 보강 후보, "
+            "음수이면 장서 대비 이용이 낮은 큐레이션/정리 검토 후보로 해석합니다."
+        ),
+        caution="격차는 의사결정 후보를 찾는 탐색 지표이며, 최종 수서·제적 판단은 사서 검토와 정책 기준이 필요합니다.",
     )
 
     # 이 진단은 '장서 대출목록' 형식(한 행 = 책, 도서권수·대출건수 보유)이 필요합니다.
@@ -301,7 +347,11 @@ elif section == "장서 진단 · 의사결정":
             source="장서 진단",
             payload={"table": table, "text": "\n".join(result[label]["findings"])},
             key=f"report_gap_{label}",
-            caption=f"수급 격차 진단 요약: {summary}" if summary else "",
+            caption=(
+                f"{gap_basis}\n\n[진단 요약]\n{summary}"
+                if summary
+                else gap_basis
+            ),
         )
 
     # --------------------------------------------------------
@@ -311,8 +361,24 @@ elif section == "장서 진단 · 의사결정":
     st.header("💊 처방 — 그래서 무엇을 해야 하나")
     st.caption("위 진단(부족·과잉)을 구체적인 행동으로 바꿉니다. 도서관마다 진단이 다르므로 처방도 달라집니다.")
 
+    prescription_basis = show_analysis_basis(
+        title="추천 처방",
+        question="진단 결과를 실제 수서·복본·큐레이션 의사결정으로 어떻게 연결할 것인가?",
+        rationale=(
+            "부족한 분야와 독자대상은 `수서 추천`으로, 회전율이 높은 단일권 도서는 `복본 추천`으로, "
+            "대출이 없거나 낮은 도서는 `정리·큐레이션 후보`로 연결합니다."
+        ),
+        criteria=(
+            "전국 인기/급상승 도서 중 미소장 도서는 보강 후보, `대출건수 ÷ 도서권수`가 높은 1권 도서는 복본 후보, "
+            "대출 0건 도서는 전시·추천·제적 검토 후보로 봅니다."
+        ),
+        caution="추천 목록은 자동 후보군이므로 구입 가능성, 최신성, 지역 이용자 특성, 예산을 함께 검토해야 합니다.",
+    )
+
     unders = prescribe.under_supplied_segments(result)
     under_text = ", ".join(unders["분야"] + unders["독자대상"]) or "뚜렷한 부족 영역 없음"
+    acquisition_count = None
+    rising_count = None
 
     st.subheader("📚 수서 추천 (전국 인기인데 우리 도서관엔 없는 책)")
     st.caption(f"부족 영역({under_text}) 위주로, 전국 인기대출 도서 중 미소장 도서를 추천합니다.")
@@ -322,6 +388,7 @@ elif section == "장서 진단 · 의사결정":
         if popular is None:
             popular = load_sample_popular()
         acquisitions = prescribe.recommend_acquisitions(prepared, popular, result, top_n=10)
+        acquisition_count = len(acquisitions)
         st.dataframe(acquisitions, use_container_width=True, hide_index=True)
         my_report.report_button(
             kind="table",
@@ -329,7 +396,7 @@ elif section == "장서 진단 · 의사결정":
             source="장서 진단 · 처방",
             payload=acquisitions,
             key="report_acq",
-            caption=f"부족 영역({under_text}) 보강을 위한 구입 추천",
+            caption=f"{prescription_basis}\n\n부족 영역({under_text}) 보강을 위한 구입 추천",
         )
     except Exception as error:
         st.info(f"수서 추천에는 전국 인기대출 데이터가 필요합니다. ({error})")
@@ -340,6 +407,7 @@ elif section == "장서 진단 · 의사결정":
         st.subheader("📈 선제 수서 (대출 급상승 중인데 우리는 없는 책)")
         st.caption("이미 인기인 책이 아니라 '떠오르는' 책 — 수요가 몰리기 전에 미리 갖추는 후보입니다.")
         rising = prescribe.recommend_rising(prepared, surge, top_n=10)
+        rising_count = len(rising)
         st.dataframe(rising, use_container_width=True, hide_index=True)
         my_report.report_button(
             kind="table",
@@ -347,20 +415,44 @@ elif section == "장서 진단 · 의사결정":
             source="장서 진단 · 처방",
             payload=rising,
             key="report_rising",
-            caption="대출이 급상승 중인 미소장 도서 — 선제적 구입 후보",
+            caption=f"{prescription_basis}\n\n대출이 급상승 중인 미소장 도서 — 선제적 구입 후보",
         )
+
+    duplicates = prescribe.recommend_duplicates(prepared, top_n=8)
+    weeding = prescribe.weeding_candidates(prepared, top_n=8)
+
+    st.subheader("처방 후보 요약")
+    summary_columns = st.columns(4)
+    summary_columns[0].metric("수서 후보", "-" if acquisition_count is None else f"{acquisition_count}권")
+    summary_columns[1].metric("급상승 후보", "-" if rising_count is None else f"{rising_count}권")
+    summary_columns[2].metric("복본 후보", f"{len(duplicates)}권")
+    summary_columns[3].metric("정리·큐레이션 후보", f"{len(weeding)}권")
 
     col_dup, col_weed = st.columns(2)
     with col_dup:
         st.subheader("📗 복본 추천")
         st.caption("회전율이 높은데 1권뿐 → 추가 구입(대기 줄이기) 후보")
-        st.dataframe(prescribe.recommend_duplicates(prepared, top_n=8),
-                     use_container_width=True, hide_index=True)
+        st.dataframe(duplicates, use_container_width=True, hide_index=True)
+        my_report.report_button(
+            kind="table",
+            title="복본 추천 후보",
+            source="장서 진단 · 처방",
+            payload=duplicates,
+            key="report_duplicates",
+            caption=f"{prescription_basis}\n\n회전율이 높은 단일권 도서 — 추가 구입 검토 후보",
+        )
     with col_weed:
         st.subheader("🗂️ 정리·큐레이션 후보")
         st.caption("대출 0건 → 전시·큐레이션으로 노출↑ 또는 제적 검토")
-        st.dataframe(prescribe.weeding_candidates(prepared, top_n=8),
-                     use_container_width=True, hide_index=True)
+        st.dataframe(weeding, use_container_width=True, hide_index=True)
+        my_report.report_button(
+            kind="table",
+            title="정리·큐레이션 검토 후보",
+            source="장서 진단 · 처방",
+            payload=weeding,
+            key="report_weeding",
+            caption=f"{prescription_basis}\n\n대출 0건 도서 — 전시·큐레이션 또는 정리 검토 후보",
+        )
 
 
 # ============================================================
@@ -371,6 +463,20 @@ elif section == "대출 추세 진단":
     st.caption(
         "월별 대출 흐름을 이동평균과 함께 봅니다. "
         "(범용 분석 대시보드의 시계열 엔진을 그대로 재사용)"
+    )
+
+    trend_basis = show_analysis_basis(
+        title="대출 추세 분석",
+        question="최근 대출 흐름은 증가하고 있는가, 감소하고 있는가, 또는 특정 시기에 변동이 큰가?",
+        rationale=(
+            "`연월`은 시간 흐름을 나타내고, `대출건수`는 도서관 이용 규모를 나타내는 핵심 지표입니다. "
+            "월별 흐름을 보면 장서 운영, 프로그램, 계절 요인과 연결될 수 있는 변화를 찾을 수 있습니다."
+        ),
+        criteria=(
+            "선그래프로 월별 변화를 보고, 이동평균으로 단기 변동을 완화해 전반적인 추세를 확인합니다. "
+            "급격한 상승·하락 구간은 별도 원인 확인이 필요한 지점입니다."
+        ),
+        caution="시계열 추세는 원인을 직접 증명하지 않으므로 행사, 방학, 휴관, 지역 이슈 같은 외부 요인과 함께 해석해야 합니다.",
     )
 
     # 월별 데이터는 ctx에서 가져옵니다. (사이드바에서 월별 파일을 올렸거나 샘플 모드)
@@ -405,7 +511,7 @@ elif section == "대출 추세 진단":
         source="대출 추세 진단",
         payload=fig,
         key="report_trend",
-        caption=insight,
+        caption=f"{trend_basis}\n\n[추세 해석]\n{insight}",
     )
 
 

@@ -8,6 +8,10 @@ from helpers import my_data
 # helper에 새 함수를 추가한 직후에도 이전 모듈을 참조해 AttributeError가 나는 것을 막습니다.
 my_data = importlib.reload(my_data)
 
+LARGE_FILE_MB = 150
+LARGE_FILE_BYTES = LARGE_FILE_MB * 1024 * 1024
+TOTAL_UPLOAD_WARNING_MB = 300
+
 
 # 업로드한 파일을 한 번만 읽도록 캐싱합니다.
 # (파일을 여러 개 올렸을 때, 위젯을 조작할 때마다 전부 다시 읽는 것을 방지)
@@ -18,9 +22,21 @@ def _cached_read(file_key, _uploaded_file):
     return my_data.read_data_file(_uploaded_file)
 
 
+def _read_uploaded_file(file_key, uploaded_file):
+    """대용량 파일은 캐시를 피해서 Streamlit Cloud 메모리 사용량을 줄입니다."""
+    if uploaded_file.size >= LARGE_FILE_BYTES:
+        return my_data.read_data_file(uploaded_file)
+    return _cached_read(file_key, uploaded_file)
+
+
 st.title("데이터 업로드 / 결합")
 
 st.write("파일을 업로드하면 데이터를 불러오고, 여러 파일을 결합할 수 있습니다.")
+
+st.caption(
+    "배포 링크에서는 파일당 최대 1GB까지 업로드를 허용하도록 설정했습니다. "
+    "다만 150MB 이상 파일은 분석 중 메모리를 많이 사용하므로 로딩 시간이 길어지거나 서버가 재시작될 수 있습니다."
+)
 
 uploaded_files = st.file_uploader(
     "데이터 파일을 선택하세요",
@@ -34,6 +50,24 @@ if uploaded_files:
     file_information = []
     failed_files = []
 
+    total_upload_mb = sum(file.size for file in uploaded_files) / 1024 / 1024
+    large_files = [
+        file.name for file in uploaded_files
+        if file.size >= LARGE_FILE_BYTES
+    ]
+
+    if large_files:
+        st.warning(
+            f"{LARGE_FILE_MB}MB 이상 파일 {len(large_files)}개는 대용량 모드로 읽습니다. "
+            "업로드 캐시는 사용하지 않아 메모리 중복을 줄이지만, 전체 분석에는 시간이 걸릴 수 있습니다."
+        )
+
+    if total_upload_mb >= TOTAL_UPLOAD_WARNING_MB:
+        st.warning(
+            f"현재 업로드한 전체 파일 크기가 약 {total_upload_mb:,.1f}MB입니다. "
+            "Streamlit Cloud에서는 파일을 읽은 뒤 실제 메모리 사용량이 업로드 크기보다 훨씬 커질 수 있습니다."
+        )
+
     # 파일이 많을 때 진행 상황을 보여주고, 한 파일이 깨져도 전체를 멈추지 않습니다.
     progress = st.progress(0.0, text="파일을 읽는 중...")
 
@@ -41,7 +75,7 @@ if uploaded_files:
         try:
             # _cached_read는 복사본을 돌려주므로 안전하게 변형할 수 있습니다.
             file_key = f"{uploaded_file.name}::{uploaded_file.size}"
-            file_data, file_info = _cached_read(file_key, uploaded_file)
+            file_data, file_info = _read_uploaded_file(file_key, uploaded_file)
         except Exception as error:
             failed_files.append({
                 "파일명": uploaded_file.name,

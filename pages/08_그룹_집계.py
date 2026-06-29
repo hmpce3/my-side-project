@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+from helpers import my_data
 from helpers import my_report
 
 
@@ -108,6 +109,7 @@ st.subheader("집계 결과")
 
 report_table = None
 report_fig = None
+report_insight = ""
 
 # --- 그룹 컬럼이 1개: groupby 표 + 막대그래프 ---
 if len(group_columns) == 1:
@@ -145,19 +147,21 @@ if len(group_columns) == 1:
         x=group,
         y=value_name,
         title=f"{group}별 {value_name}",
+        color_discrete_sequence=["#0068c9"],
     )
+    report_fig.update_traces(marker_color="#0068c9")
     report_fig.update_layout(xaxis={"categoryorder": "total descending"})
     st.plotly_chart(report_fig, use_container_width=True)
 
-    # 간단 인사이트(최대 그룹) — 결과가 비어 있지 않을 때만
+    # 보고서에 바로 넣을 수 있는 분석 해석
     if not result.empty:
-        top_row = result.iloc[0]
-        top_value = top_row[value_name]
-        top_value_text = f"{top_value:,.2f}" if pd.notna(top_value) else "계산 불가"
-        st.info(
-            f"`{top_row[group]}` 그룹의 {value_name}가 "
-            f"{top_value_text}로 가장 큽니다."
+        report_insight = my_data.group_aggregation_insight(
+            result,
+            group_column=group,
+            value_column=value_name,
+            agg_label=agg_label,
         )
+        st.info(report_insight)
 
 # --- 그룹 컬럼이 2개: 피벗표 + 히트맵 ---
 else:
@@ -193,6 +197,14 @@ else:
     except Exception:
         report_fig = None
 
+    report_insight = my_data.pivot_aggregation_insight(
+        pivot,
+        row_column=g1,
+        column_column=g2,
+        value_name=value_name,
+    )
+    st.info(report_insight)
+
 
 # ------------------------------------------------------------
 # 4. 다운로드 + 보고서 담기
@@ -221,6 +233,7 @@ with report_col:
             "그룹별 집계",
             report_table,
             key="add_group_table",
+            caption=report_insight,
             label="📌 표 리포트에 담기",
         )
 
@@ -231,5 +244,6 @@ with report_col:
             "그룹별 집계",
             report_fig,
             key="add_group_chart",
+            caption=report_insight,
             label="📌 그래프 리포트에 담기",
         )

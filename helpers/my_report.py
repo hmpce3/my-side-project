@@ -120,6 +120,54 @@ def chart_title(fig, default="그래프"):
     return default
 
 
+def _chart_for_report(fig):
+    """HTML 보고서에서도 Plotly 그래프 색상이 유지되도록 기본 색을 보강합니다."""
+    try:
+        import plotly.graph_objects as go
+        report_fig = go.Figure(fig)
+    except Exception:
+        return fig
+
+    palette = [
+        "#0068c9",
+        "#83c9ff",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+    ]
+
+    for index, trace in enumerate(report_fig.data):
+        color = palette[index % len(palette)]
+        trace_type = getattr(trace, "type", "")
+
+        if trace_type == "bar":
+            marker = getattr(trace, "marker", None)
+            current_color = getattr(marker, "color", None) if marker is not None else None
+            if current_color is None:
+                trace.update(marker=dict(color=color))
+
+        elif trace_type in ("scatter", "scattergl"):
+            mode = getattr(trace, "mode", "") or ""
+            line = getattr(trace, "line", None)
+            marker = getattr(trace, "marker", None)
+            line_color = getattr(line, "color", None) if line is not None else None
+            marker_color = getattr(marker, "color", None) if marker is not None else None
+
+            if "lines" in mode and line_color is None:
+                trace.update(line=dict(color=color, width=2.5))
+            if "markers" in mode and marker_color is None:
+                trace.update(marker=dict(color=color, size=6))
+
+    report_fig.update_layout(
+        template="plotly_white",
+        font=dict(family="Malgun Gothic, Apple SD Gothic Neo, system-ui, sans-serif"),
+    )
+    return report_fig
+
+
 # ------------------------------------------------------------
 # HTML 보고서 생성
 # ------------------------------------------------------------
@@ -206,7 +254,8 @@ def render_report_html(meta):
 
         if kind == "chart":
             include = "cdn" if first_chart else False
-            parts.append(payload.to_html(full_html=False, include_plotlyjs=include))
+            chart_payload = _chart_for_report(payload)
+            parts.append(chart_payload.to_html(full_html=False, include_plotlyjs=include))
             first_chart = False
         elif kind == "table":
             parts.append(payload.to_html(border=0, index=False))

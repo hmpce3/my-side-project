@@ -988,7 +988,17 @@ if "숫자형 구간화 (binning)" in cleaning_options:
                             duplicates="drop",
                         )
 
-                    cleaned_data[new_bin_column] = binned.astype("object")
+                    # pd.cut/qcut의 기본 결과는 Interval 객체입니다.
+                    # Streamlit의 st.dataframe은 Interval 객체를 Arrow로 변환하지 못하므로
+                    # 화면 표시, 저장, 후속 분석에서 안전한 문자열 범주로 보관합니다.
+                    binned_text = pd.Series(
+                        binned,
+                        index=cleaned_data.index,
+                    ).astype("string")
+                    cleaned_data[new_bin_column] = binned_text.mask(
+                        binned_text.isin(["nan", "<NA>"]),
+                        pd.NA,
+                    )
 
                     cleaning_applied = True
                     applied_steps.append(

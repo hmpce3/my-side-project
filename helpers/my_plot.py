@@ -1603,6 +1603,24 @@ def make_timeseries_line(ts_df, date_column, value_columns, title="시계열 추
         title=title,
     )
 
+    # Streamlit 화면에서는 테마가 자동으로 색을 입혀주지만,
+    # HTML 보고서로 내보낼 때는 기본 스타일이 달라져 선이 모두 검정으로 보일 수 있습니다.
+    # 그래서 시계열 그래프는 선 색상을 명시적으로 고정합니다.
+    line_colors = [
+        "#0068c9",
+        "#83c9ff",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+    ]
+    for index, trace in enumerate(fig.data):
+        color = line_colors[index % len(line_colors)]
+        trace.update(
+            line=dict(color=color, width=2.5),
+            marker=dict(color=color, size=6),
+        )
+
     fig.update_layout(
         legend_title_text="",
         xaxis_title=date_column,

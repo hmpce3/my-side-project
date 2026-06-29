@@ -139,7 +139,9 @@ test_type = st.selectbox(
         "대응표본 T-TEST",
         "독립표본 T-TEST",
         "일원분산분석 ANOVA",
+        "이원분산분석 ANOVA",
         "상관분석",
+        "다중 상관분석",
         "교차분석 (카이제곱)",
         "비모수: Mann-Whitney U (독립 2집단)",
         "비모수: Wilcoxon (대응 2집단)",
@@ -751,12 +753,6 @@ elif test_type == "일원분산분석 ANOVA":
 
         st.info(interpretation_text)
 
-        st.session_state["stat_candidate"] = {
-            "title": "통계 분석 - 일원분산분석 ANOVA",
-            "table": test_result_display,
-            "text": interpretation_text,
-        }
-
         # ------------------------------------------------------------
         # 10) 사후검정
         # ------------------------------------------------------------
@@ -795,6 +791,177 @@ elif test_type == "일원분산분석 ANOVA":
             st.subheader("사후검정 인사이트")
 
             st.info(posthoc_insight)
+
+            interpretation_text += "\n\n[사후검정 인사이트]\n" + posthoc_insight
+            report_table = pd.concat(
+                [
+                    test_result_display,
+                    pd.DataFrame([{}]),
+                    pd.DataFrame({"test": ["[사후검정 결과]"]}),
+                    posthoc_result_display,
+                ],
+                ignore_index=True,
+                sort=False,
+            )
+        else:
+            report_table = test_result_display
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 일원분산분석 ANOVA",
+            "table": report_table,
+            "text": interpretation_text,
+        }
+
+
+# ------------------------------------------------------------
+# 이원분산분석
+# ------------------------------------------------------------
+# 목적:
+# 두 범주형 요인이 숫자형 변수의 평균에 미치는 영향을 동시에 확인합니다.
+# 주효과뿐 아니라 두 요인의 조합 효과(상호작용)까지 볼 수 있습니다.
+# ------------------------------------------------------------
+elif test_type == "이원분산분석 ANOVA":
+    st.subheader("이원분산분석 ANOVA")
+
+    if len(categorical_columns) < 2:
+        st.warning("이원분산분석을 하려면 범주형 컬럼이 2개 이상 필요합니다.")
+        st.stop()
+
+    factor_col1, factor_col2 = st.columns(2)
+
+    with factor_col1:
+        factor_a = st.selectbox(
+            "첫 번째 요인(범주형)을 선택하세요",
+            categorical_columns,
+            key="twoway_factor_a",
+        )
+
+    with factor_col2:
+        factor_b = st.selectbox(
+            "두 번째 요인(범주형)을 선택하세요",
+            categorical_columns,
+            index=1 if len(categorical_columns) > 1 else 0,
+            key="twoway_factor_b",
+        )
+
+    value_column = st.selectbox(
+        "비교할 숫자형 변수를 선택하세요",
+        numeric_columns,
+        key="twoway_value_column",
+    )
+
+    st.info(
+        "이원분산분석은 두 범주형 요인이 평균 차이에 미치는 영향을 동시에 봅니다. "
+        "예를 들어 `분야 × 이용자층` 조합에 따라 대출 건수 평균이 달라지는지 확인할 수 있습니다."
+    )
+
+    if factor_a == factor_b:
+        st.warning("서로 다른 두 범주형 요인을 선택해주세요.")
+
+    elif st.button("이원분산분석 ANOVA 실행"):
+        filtered_data = stats_data[[factor_a, factor_b, value_column]].dropna().copy()
+        filtered_data[value_column] = pd.to_numeric(
+            filtered_data[value_column],
+            errors="coerce",
+        )
+        filtered_data = filtered_data.dropna(subset=[value_column])
+
+        group_counts = (
+            filtered_data
+            .groupby([factor_a, factor_b])
+            .size()
+            .reset_index(name="표본 수")
+        )
+
+        if filtered_data[factor_a].nunique() < 2 or filtered_data[factor_b].nunique() < 2:
+            st.warning("각 요인은 최소 2개 이상의 범주가 있어야 합니다.")
+            st.stop()
+
+        if (group_counts["표본 수"] < 2).any():
+            st.warning(
+                "일부 요인 조합의 표본 수가 2개 미만입니다. "
+                "범주를 줄이거나 다른 변수를 선택하면 더 안정적인 결과를 얻을 수 있습니다."
+            )
+
+        st.subheader("요인 조합별 표본 수")
+        st.dataframe(group_counts, use_container_width=True, hide_index=True)
+
+        try:
+            result = my_stats.anova_twoway(
+                filtered_data,
+                y=value_column,
+                between=[factor_a, factor_b],
+                alpha=alpha,
+            )
+        except Exception as error:
+            st.error(f"이원분산분석을 수행할 수 없습니다: {error}")
+            st.stop()
+
+        result_display = my_stats.format_stat_result_for_app(
+            result.reset_index(drop=True)
+        )
+
+        st.subheader("이원분산분석 결과")
+        st.dataframe(result_display, use_container_width=True)
+
+        interpretation_text = my_stats.make_twoway_anova_interpretation(
+            result,
+            y_column=value_column,
+            factor_columns=[factor_a, factor_b],
+            alpha=alpha,
+        )
+
+        st.subheader("결과 해석")
+        st.info(interpretation_text)
+
+        report_table = result_display
+        has_significant_effect = False
+        if "significant" in result.columns:
+            has_significant_effect = bool(result["significant"].fillna(False).any())
+
+        if has_significant_effect:
+            st.subheader("조합별 사후검정 결과")
+            st.caption("유의한 효과가 있으므로 어떤 요인 조합끼리 차이가 있는지 확인합니다.")
+
+            try:
+                posthoc_result = my_stats.posthoc_twoway(
+                    filtered_data,
+                    y=value_column,
+                    between=[factor_a, factor_b],
+                    alpha=alpha,
+                )
+                posthoc_result_display = my_stats.format_stat_result_for_app(
+                    posthoc_result.reset_index(drop=True)
+                )
+                st.dataframe(posthoc_result_display, use_container_width=True)
+
+                posthoc_insight = my_stats.make_posthoc_insight(
+                    posthoc_result,
+                    alpha=alpha,
+                )
+                st.subheader("사후검정 인사이트")
+                st.info(posthoc_insight)
+
+                interpretation_text += "\n\n[사후검정 인사이트]\n" + posthoc_insight
+                report_table = pd.concat(
+                    [
+                        result_display,
+                        pd.DataFrame([{}]),
+                        pd.DataFrame({"test": ["[조합별 사후검정 결과]"]}),
+                        posthoc_result_display,
+                    ],
+                    ignore_index=True,
+                    sort=False,
+                )
+            except Exception as error:
+                st.warning(f"사후검정을 수행할 수 없습니다: {error}")
+
+        st.session_state["stat_candidate"] = {
+            "title": f"통계 분석 - 이원분산분석 ({factor_a} × {factor_b})",
+            "table": report_table,
+            "text": interpretation_text,
+        }
+
 
 # ------------------------------------------------------------
 # 상관분석
@@ -941,6 +1108,72 @@ elif test_type == "상관분석":
             "title": "통계 분석 - 상관분석",
             "table": result_display,
             "text": correlation_summary,
+        }
+
+
+# ------------------------------------------------------------
+# 다중 상관분석
+# ------------------------------------------------------------
+# 목적:
+# 여러 숫자형 변수 사이의 관계를 한 번에 훑고, 강하고 유의한 변수쌍을 찾습니다.
+# ------------------------------------------------------------
+elif test_type == "다중 상관분석":
+    st.subheader("다중 상관분석")
+
+    if len(numeric_columns) < 2:
+        st.warning("다중 상관분석을 수행하려면 숫자형 컬럼이 최소 2개 필요합니다.")
+        st.stop()
+
+    selected_columns = st.multiselect(
+        "상관분석에 포함할 숫자형 변수를 선택하세요",
+        numeric_columns,
+        default=numeric_columns[:min(5, len(numeric_columns))],
+        key="multi_corr_columns",
+    )
+
+    st.info(
+        "선택한 숫자형 변수들의 모든 조합을 비교합니다. "
+        "각 변수쌍은 정규성·선형성·이상치 영향을 점검한 뒤 Pearson 또는 Spearman 상관계수를 자동 선택합니다."
+    )
+
+    if len(selected_columns) < 2:
+        st.warning("숫자형 변수를 2개 이상 선택해주세요.")
+
+    elif st.button("다중 상관분석 실행"):
+        try:
+            result_table, corr_matrix = my_stats.multi_correlation_for_app(
+                stats_data,
+                columns=selected_columns,
+                alpha=alpha,
+            )
+        except Exception as error:
+            st.error(f"다중 상관분석을 수행할 수 없습니다: {error}")
+            st.stop()
+
+        result_display = my_stats.format_stat_result_for_app(result_table)
+
+        st.subheader("변수쌍별 상관분석 결과")
+        st.dataframe(result_display, use_container_width=True, hide_index=True)
+
+        st.subheader("상관관계 히트맵")
+        fig = my_plot.make_correlation_heatmap(
+            stats_data,
+            selected_columns,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        interpretation_text = my_stats.make_multi_correlation_interpretation(
+            result_table,
+            alpha=alpha,
+        )
+
+        st.subheader("결과 해석")
+        st.info(interpretation_text)
+
+        st.session_state["stat_candidate"] = {
+            "title": "통계 분석 - 다중 상관분석",
+            "table": result_display,
+            "text": interpretation_text,
         }
 
 

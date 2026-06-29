@@ -145,6 +145,42 @@ elif st.button("회귀분석 실행"):
 
     st.dataframe(coef_display, use_container_width=True, hide_index=True)
 
+    # --- 다중공선성(VIF) 진단 ---
+    vif_display = None
+    vif_interpretation = ""
+    if len(x_columns) >= 2:
+        st.subheader("다중공선성 진단 (VIF)")
+        st.caption(
+            "VIF는 설명변수끼리 정보가 얼마나 겹치는지 보는 지표입니다. "
+            "보통 5 이상이면 주의, 10 이상이면 회귀계수 해석이 불안정할 수 있습니다."
+        )
+
+        try:
+            vif_table = my_stats.compute_regression_vif(
+                reg_data,
+                x_columns=x_columns,
+            )
+            vif_display = vif_table.copy()
+            if not vif_display.empty:
+                def format_vif(value):
+                    value = pd.to_numeric(value, errors="coerce")
+                    if pd.isna(value):
+                        return "-"
+                    if value == float("inf"):
+                        return "∞"
+                    return round(float(value), 3)
+
+                vif_display["VIF"] = vif_display["VIF"].apply(format_vif)
+                st.dataframe(vif_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("VIF를 계산하려면 서로 다른 숫자형 설명변수가 2개 이상 필요합니다.")
+
+            vif_interpretation = my_stats.make_vif_interpretation(vif_table)
+            st.info(vif_interpretation)
+        except Exception as error:
+            vif_interpretation = f"VIF 진단을 수행할 수 없습니다: {error}"
+            st.warning(vif_interpretation)
+
     # --- 잔차 진단 플롯 ---
     st.subheader("잔차 진단")
     st.caption(
@@ -175,13 +211,29 @@ elif st.button("회귀분석 실행"):
     interpretation = my_stats.make_regression_interpretation(
         coef_table, metrics, y_column, alpha=alpha
     )
-    st.info(interpretation)
+    report_text = interpretation
+    if vif_interpretation:
+        report_text += "\n\n[VIF 다중공선성 진단]\n" + vif_interpretation
+    st.info(report_text)
 
     # 보고서 담기용으로 결과를 저장합니다.
+    report_table = coef_display
+    if vif_display is not None and not vif_display.empty:
+        report_table = pd.concat(
+            [
+                coef_display,
+                pd.DataFrame([{}]),
+                pd.DataFrame({"변수": ["[VIF 진단 결과]"]}),
+                vif_display.rename(columns={"판정": "유의성"}),
+            ],
+            ignore_index=True,
+            sort=False,
+        )
+
     st.session_state["regression_candidate"] = {
         "title": f"회귀분석 - {y_column} ~ {', '.join(x_columns)}",
-        "table": coef_display,
-        "text": interpretation,
+        "table": report_table,
+        "text": report_text,
     }
 
 

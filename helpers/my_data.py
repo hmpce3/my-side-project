@@ -484,6 +484,144 @@ def make_sample_data(data, sample_size=5000, random_state=42):
     ).reset_index(drop=True)
 
 
+def recommend_analysis_flow(data):
+    """
+    업로드된 데이터의 구조를 보고 다음 분석 흐름을 추천합니다.
+
+    사용자가 "이제 무엇을 해야 하지?"에서 멈추지 않도록
+    컬럼 타입, 결측/중복, 날짜 후보, 행 수를 기준으로 추천 페이지와 이유를 만듭니다.
+    """
+
+    if data is None or data.empty:
+        return (
+            "데이터가 비어 있어 추천 흐름을 만들 수 없습니다.",
+            DataFrame(columns=["순서", "추천 작업", "이유", "추천 페이지"]),
+            []
+        )
+
+    df = data.copy()
+    row_count, column_count = df.shape
+    memory_mb = df.memory_usage(deep=True).sum() / 1024 / 1024
+
+    numeric_columns = df.select_dtypes(include="number").columns.tolist()
+    categorical_columns = df.select_dtypes(
+        include=["object", "category", "string"]
+    ).columns.tolist()
+    datetime_columns = df.select_dtypes(
+        include=["datetime", "datetimetz"]
+    ).columns.tolist()
+
+    date_name_keywords = [
+        "날짜", "일자", "년월", "월일", "기준일", "등록일", "수정일",
+        "date", "time", "created", "updated",
+    ]
+    date_name_candidates = [
+        column for column in df.columns
+        if any(keyword in str(column).lower() for keyword in date_name_keywords)
+    ]
+    date_candidates = list(dict.fromkeys(datetime_columns + date_name_candidates))
+
+    missing_cells = int(df.isna().sum().sum())
+    missing_ratio = missing_cells / (row_count * column_count) if row_count and column_count else 0
+    duplicate_rows = int(df.duplicated().sum())
+
+    recommendations = []
+
+    def add(title, reason, page):
+        recommendations.append({
+            "순서": len(recommendations) + 1,
+            "추천 작업": title,
+            "이유": reason,
+            "추천 페이지": page,
+        })
+
+    add(
+        "데이터 상태 먼저 확인",
+        f"{row_count:,}행, {column_count:,}열 데이터입니다. 결측치·중복·타입을 먼저 확인하면 이후 분석 오류를 줄일 수 있습니다.",
+        "데이터 품질 점검",
+    )
+
+    if missing_cells > 0 or duplicate_rows > 0:
+        add(
+            "정제 후 분석",
+            f"결측치 {missing_cells:,}개, 중복 행 {duplicate_rows:,}개가 있습니다. 필요한 처리 후 분석하는 것을 권장합니다.",
+            "데이터 정제",
+        )
+    elif column_count >= 1:
+        add(
+            "필요한 컬럼만 가볍게 정리",
+            "큰 문제는 없어 보이지만, 날짜 타입 변경이나 불필요한 컬럼 삭제를 해두면 분석이 더 편해집니다.",
+            "데이터 정제",
+        )
+
+    if date_candidates and numeric_columns:
+        add(
+            "시간 흐름 분석",
+            f"날짜 후보({', '.join(map(str, date_candidates[:3]))})와 숫자형 변수 {len(numeric_columns)}개가 있어 추세·이동평균 분석이 가능합니다.",
+            "시계열 분석",
+        )
+
+    if categorical_columns and numeric_columns:
+        add(
+            "그룹별 차이 비교",
+            f"범주형 변수 {len(categorical_columns)}개와 숫자형 변수 {len(numeric_columns)}개가 있어 그룹별 평균·합계 비교가 가능합니다.",
+            "그룹별 집계",
+        )
+
+    if len(numeric_columns) >= 2:
+        add(
+            "변수 간 관계 확인",
+            f"숫자형 변수가 {len(numeric_columns)}개 있어 상관분석이나 회귀분석으로 관계를 확인할 수 있습니다.",
+            "통계 분석",
+        )
+
+    if len(numeric_columns) >= 2 and row_count >= 30:
+        add(
+            "설명/예측 모델 검토",
+            "표본 수와 숫자형 변수가 충분해 보입니다. 종속변수와 설명변수를 정해 회귀분석을 시도할 수 있습니다.",
+            "회귀분석",
+        )
+
+    if len(categorical_columns) >= 2:
+        add(
+            "범주형 변수 관계 확인",
+            f"범주형 변수가 {len(categorical_columns)}개 있어 교차표와 카이제곱 검정으로 관계를 볼 수 있습니다.",
+            "통계 분석",
+        )
+
+    add(
+        "결과 모아 보고서 만들기",
+        "분석 과정에서 중요한 표와 그래프를 리포트에 담아 HTML 보고서로 정리할 수 있습니다.",
+        "보고서",
+    )
+
+    notes = []
+    if memory_mb > 150 or row_count > 1_000_000:
+        notes.append(
+            "데이터가 큰 편입니다. 링크 배포 환경에서는 전체 데이터 분석보다 샘플·집계 중심 분석을 권장합니다."
+        )
+    if missing_ratio >= 0.2:
+        notes.append(
+            f"전체 셀의 약 {missing_ratio * 100:.1f}%가 결측치입니다. 분석 전에 결측 처리 기준을 정하는 것이 좋습니다."
+        )
+    if len(numeric_columns) == 0:
+        notes.append(
+            "숫자형 컬럼이 없어 통계·회귀·시계열 값 분석이 제한됩니다. 숫자로 보이는 컬럼은 데이터 정제에서 숫자형으로 바꿔보세요."
+        )
+    if not date_candidates:
+        notes.append(
+            "날짜 컬럼이 뚜렷하지 않습니다. 시간 흐름을 보고 싶다면 날짜 컬럼을 날짜형으로 변환해야 합니다."
+        )
+
+    summary = (
+        f"이 데이터는 {row_count:,}행, {column_count:,}열입니다. "
+        f"숫자형 {len(numeric_columns)}개, 범주형 {len(categorical_columns)}개, "
+        f"날짜 후보 {len(date_candidates)}개를 찾았습니다."
+    )
+
+    return summary, DataFrame(recommendations), notes
+
+
 
 #==============================
 def categorical_summary_for_app(data):
@@ -697,7 +835,7 @@ def add_moving_average(ts_df, value_column, window=3, ma_column="이동평균"):
 
 
 def timeseries_trend_insight(ts_df, date_column, value_column):
-    """시계열의 전반적인 추세를 1차 회귀 기울기로 판단해 해석 문장을 만듭니다."""
+    """시계열의 전반적인 추세와 변동성을 해석 문장으로 만듭니다."""
     series = ts_df[[date_column, value_column]].dropna()
 
     if len(series) < 3:
@@ -713,6 +851,12 @@ def timeseries_trend_insight(ts_df, date_column, value_column):
     last_value = y[-1]
     start_label = series[date_column].iloc[0]
     end_label = series[date_column].iloc[-1]
+    peak_idx = int(np.nanargmax(y))
+    low_idx = int(np.nanargmin(y))
+    peak_value = y[peak_idx]
+    low_value = y[low_idx]
+    peak_label = series[date_column].iloc[peak_idx]
+    low_label = series[date_column].iloc[low_idx]
 
     # 변화율(%)은 시작값이 0이 아닐 때만 계산합니다.
     if first_value != 0:
@@ -731,11 +875,155 @@ def timeseries_trend_insight(ts_df, date_column, value_column):
     try:
         start_str = pd.Timestamp(start_label).date()
         end_str = pd.Timestamp(end_label).date()
+        peak_str = pd.Timestamp(peak_label).date()
+        low_str = pd.Timestamp(low_label).date()
     except Exception:
         start_str, end_str = start_label, end_label
+        peak_str, low_str = peak_label, low_label
+
+    mean_value = np.nanmean(y)
+    std_value = np.nanstd(y)
+    volatility_text = ""
+    if mean_value and not np.isnan(mean_value):
+        cv = std_value / abs(mean_value)
+        if cv >= 0.5:
+            volatility_text = (
+                " 기간별 변동 폭이 큰 편이라 평균 추세만으로 판단하기보다 "
+                "특정 급등/급락 구간의 원인을 함께 확인하는 것이 좋습니다."
+            )
+        elif cv >= 0.2:
+            volatility_text = " 중간 수준의 변동이 있어 이동평균과 원자료를 함께 보는 것이 좋습니다."
+        else:
+            volatility_text = " 기간별 변동 폭은 비교적 안정적인 편입니다."
 
     return (
         f"`{value_column}`는 {start_str}부터 {end_str}까지 {trend}를 보입니다"
-        f"{change_text}. 이동평균선을 함께 보면 단기 변동을 걷어낸 흐름을 더 명확히 볼 수 있어요. "
+        f"{change_text}. 관측 구간에서 최고값은 {peak_str}의 {peak_value:,.2f}, "
+        f"최저값은 {low_str}의 {low_value:,.2f}입니다.{volatility_text} "
+        "이동평균선을 함께 보면 단기 변동을 걷어낸 흐름을 더 명확히 볼 수 있어요. "
         "⚠️ 과거 추세가 미래에도 이어진다는 보장은 없으니 예측에는 주의하세요."
     )
+
+
+def _format_insight_value(value):
+    """인사이트 문장에 넣을 숫자를 보기 좋게 포맷합니다."""
+    if pd.isna(value):
+        return "계산 불가"
+    try:
+        return f"{float(value):,.2f}"
+    except Exception:
+        return str(value)
+
+
+def group_aggregation_insight(result, group_column, value_column, agg_label):
+    """단일 그룹 집계 결과를 보고서용 해석 문장으로 바꿉니다."""
+    if result is None or result.empty:
+        return "집계 결과가 비어 있어 해석을 생성할 수 없습니다."
+
+    if group_column not in result.columns or value_column not in result.columns:
+        return "집계 결과 컬럼을 확인할 수 없어 해석을 생성할 수 없습니다."
+
+    df = result[[group_column, value_column]].copy()
+    df[value_column] = pd.to_numeric(df[value_column], errors="coerce")
+    df = df.dropna(subset=[value_column]).sort_values(value_column, ascending=False)
+
+    if df.empty:
+        return "집계값이 모두 비어 있어 해석을 생성할 수 없습니다."
+
+    top = df.iloc[0]
+    bottom = df.iloc[-1]
+    group_count = len(df)
+    top_group = str(top[group_column])
+    top_value = top[value_column]
+    bottom_group = str(bottom[group_column])
+    bottom_value = bottom[value_column]
+
+    lines = [
+        f"`{top_group}` 그룹이 {value_column} 기준으로 가장 높은 값({_format_insight_value(top_value)})을 보입니다."
+    ]
+
+    if group_count >= 2:
+        second = df.iloc[1]
+        gap = top_value - second[value_column]
+        lines.append(
+            f"2위 `{second[group_column]}`와의 차이는 {_format_insight_value(gap)}입니다. "
+            "이 차이가 실제로 의미 있는지는 표본 수, 기간, 집계 기준이 같은지 함께 확인해야 합니다."
+        )
+
+    if group_count >= 3:
+        median_value = df[value_column].median()
+        if median_value != 0 and not pd.isna(median_value):
+            ratio = top_value / median_value
+            lines.append(
+                f"전체 그룹의 중앙값({_format_insight_value(median_value)})과 비교하면 "
+                f"상위 그룹은 약 {ratio:.1f}배 수준입니다. "
+                "특정 그룹이 전체 패턴을 끌어올리는지 확인할 수 있는 지점입니다."
+            )
+        lines.append(
+            f"가장 낮은 그룹은 `{bottom_group}`({_format_insight_value(bottom_value)})입니다. "
+            "상위/하위 그룹의 차이가 데이터 수집 누락, 표본 수 차이, 실제 행동 차이 중 무엇에서 왔는지 분리해서 보는 것이 좋습니다."
+        )
+
+    non_negative = (df[value_column] >= 0).all()
+    can_use_share = agg_label in ["개수", "합계"] and non_negative
+    total = df[value_column].sum()
+    if can_use_share and total > 0:
+        top_share = top_value / total * 100
+        if top_share >= 50:
+            lines.append(
+                f"`{top_group}` 하나가 전체의 {top_share:.1f}%를 차지합니다. "
+                "결과가 일부 그룹에 집중되어 있으므로 평균보다 점유율과 상위 그룹 비중을 함께 보는 편이 안전합니다."
+            )
+        else:
+            lines.append(
+                f"`{top_group}`의 전체 비중은 {top_share:.1f}%입니다. "
+                "상위 그룹이 크기는 하지만 한 그룹만으로 전체가 설명되는 구조는 아닙니다."
+            )
+    elif agg_label in ["평균", "중앙값"]:
+        lines.append(
+            f"`{agg_label}` 비교는 그룹별 표본 수에 민감합니다. "
+            "표본 수가 작은 그룹의 평균/중앙값은 우연한 값에 흔들릴 수 있으니 개수 집계와 함께 확인하는 것이 좋습니다."
+        )
+
+    return "\n\n".join(lines)
+
+
+def pivot_aggregation_insight(pivot, row_column, column_column, value_name):
+    """2차원 피벗 집계 결과를 보고서용 해석 문장으로 바꿉니다."""
+    if pivot is None or pivot.empty:
+        return "피벗 집계 결과가 비어 있어 해석을 생성할 수 없습니다."
+
+    numeric = pivot.apply(pd.to_numeric, errors="coerce")
+    stacked = numeric.stack(dropna=True)
+
+    if stacked.empty:
+        return "피벗표의 집계값이 모두 비어 있어 해석을 생성할 수 없습니다."
+
+    max_key = stacked.idxmax()
+    min_key = stacked.idxmin()
+    max_value = stacked.loc[max_key]
+    min_value = stacked.loc[min_key]
+    filled_ratio = stacked.count() / numeric.size * 100 if numeric.size else 0
+
+    row_max, col_max = max_key
+    row_min, col_min = min_key
+
+    lines = [
+        f"`{row_column}={row_max}`, `{column_column}={col_max}` 조합이 "
+        f"{value_name} 기준으로 가장 높은 값({_format_insight_value(max_value)})을 보입니다.",
+        f"가장 낮은 조합은 `{row_column}={row_min}`, `{column_column}={col_min}`"
+        f"({_format_insight_value(min_value)})입니다.",
+    ]
+
+    if filled_ratio < 70:
+        lines.append(
+            f"피벗표에서 실제 값이 있는 셀은 전체의 {filled_ratio:.1f}%입니다. "
+            "빈 조합이 많은 편이므로 없는 수요/활동인지, 데이터 누락인지 먼저 구분해야 합니다."
+        )
+    else:
+        lines.append(
+            f"피벗표의 값 채움 비율은 {filled_ratio:.1f}%로, 대부분의 조합을 비교할 수 있습니다. "
+            "색이 진한 구간을 우선 확인하면 집중되는 조합을 빠르게 찾을 수 있습니다."
+        )
+
+    return "\n\n".join(lines)

@@ -1,7 +1,12 @@
 import streamlit as st
 import pandas as pd
+import importlib
 
 from helpers import my_data
+
+# Streamlit은 실행 중인 프로세스에서 import된 helper 모듈을 계속 들고 있을 수 있습니다.
+# helper에 새 함수를 추가한 직후에도 이전 모듈을 참조해 AttributeError가 나는 것을 막습니다.
+my_data = importlib.reload(my_data)
 
 
 # 업로드한 파일을 한 번만 읽도록 캐싱합니다.
@@ -280,6 +285,16 @@ if uploaded_files:
         
     st.session_state["data"] = data
     st.session_state["sample_data"] = sample_data
+    try:
+        summary_text, recommendation_table, recommendation_notes = (
+            my_data.recommend_analysis_flow(data)
+        )
+    except Exception as error:
+        summary_text = ""
+        recommendation_table = pd.DataFrame()
+        recommendation_notes = [f"추천 분석 흐름을 만들지 못했습니다: {error}"]
+
+    st.session_state["analysis_recommendations"] = recommendation_table
 
     if "cleaned_data" in st.session_state:
         del st.session_state["cleaned_data"]
@@ -287,3 +302,42 @@ if uploaded_files:
     st.success(
         "데이터가 저장되었습니다. 이제 다른 페이지에서 사용할 수 있습니다."
     )
+
+    if not recommendation_table.empty:
+        st.subheader("추천 분석 흐름")
+        st.write(summary_text)
+
+        st.dataframe(
+            recommendation_table,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        if recommendation_notes:
+            for note in recommendation_notes:
+                st.warning(note)
+
+        st.caption("추천은 데이터 구조를 기준으로 만든 안내입니다. 분석 목적에 따라 순서를 바꿔도 됩니다.")
+
+        def go(page_name):
+            st.session_state["nav"] = page_name
+
+        shortcut_pages = []
+        for page_name in recommendation_table["추천 페이지"].tolist():
+            if page_name not in shortcut_pages:
+                shortcut_pages.append(page_name)
+
+        st.write("바로 이동")
+        shortcut_columns = st.columns(min(4, len(shortcut_pages)))
+        for index, page_name in enumerate(shortcut_pages[:4]):
+            with shortcut_columns[index]:
+                st.button(
+                    page_name,
+                    key=f"recommend_go_{page_name}",
+                    on_click=go,
+                    args=(page_name,),
+                    use_container_width=True,
+                )
+    elif recommendation_notes:
+        for note in recommendation_notes:
+            st.warning(note)

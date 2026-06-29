@@ -1433,6 +1433,288 @@ def make_posthoc_insight(posthoc_result, alpha=0.05):
     return insight_text
 
 
+def _p_value_column(result):
+    """통계 결과표에서 p-value에 해당하는 컬럼명을 찾습니다."""
+    candidates = [
+        "p-value", "p-unc", "p_unc", "pval", "p-tukey",
+        "p_tukey", "p-corr", "p-unc", "PR(>F)", "p"
+    ]
+    for column in candidates:
+        if column in result.columns:
+            return column
+    for column in result.columns:
+        if "p" in str(column).lower():
+            return column
+    return None
+
+
+def make_twoway_anova_interpretation(result, y_column, factor_columns, alpha=0.05):
+    """이원분산분석 결과를 보고서에 바로 넣을 수 있는 문장으로 정리합니다."""
+    if result is None or result.empty:
+        return "이원분산분석 결과가 없어 해석 문장을 생성할 수 없습니다."
+
+    pcol = _p_value_column(result)
+    if pcol is None:
+        return "이원분산분석 결과에서 p-value 컬럼을 찾지 못해 해석 문장을 생성할 수 없습니다."
+
+    source_col = "Source" if "Source" in result.columns else None
+    if source_col is None:
+        return "이원분산분석 결과에서 효과(Source) 컬럼을 찾지 못해 해석 문장을 생성할 수 없습니다."
+
+    analysis_rows = result[
+        result[source_col].astype(str).str.lower() != "residual"
+    ].copy()
+    analysis_rows[pcol] = pd.to_numeric(analysis_rows[pcol], errors="coerce")
+    analysis_rows = analysis_rows.dropna(subset=[pcol])
+
+    if analysis_rows.empty:
+        return "이원분산분석에서 해석 가능한 효과 행을 찾지 못했습니다."
+
+    significant_rows = analysis_rows[analysis_rows[pcol] < alpha]
+
+    factor_a, factor_b = factor_columns
+    lines = [
+        f"이원분산분석은 `{factor_a}`와 `{factor_b}`가 `{y_column}`에 미치는 주효과와 "
+        "두 요인이 함께 작용하는 상호작용 효과를 동시에 확인합니다."
+    ]
+
+    if significant_rows.empty:
+        lines.append(
+            f"유의수준 {alpha} 기준에서 통계적으로 유의한 효과는 확인되지 않았습니다. "
+            f"즉, 현재 데이터만으로는 `{factor_a}`, `{factor_b}`, 또는 두 요인의 조합에 따라 "
+            f"`{y_column}` 평균이 달라진다고 보기 어렵습니다."
+        )
+    else:
+        parts = []
+        for _, row in significant_rows.iterrows():
+            source = row[source_col]
+            p_value = row[pcol]
+            effect_size = row.get("effect_size", "")
+            effect_text = f", 효과크기 {effect_size}" if effect_size and effect_size != "-" else ""
+            parts.append(f"`{source}`(p={format_p_value(p_value)}{effect_text})")
+        lines.append(
+            f"유의수준 {alpha} 기준에서 유의한 효과는 " + ", ".join(parts) + "입니다. "
+            "유의한 주효과는 해당 요인의 집단별 평균 차이를 뜻하고, "
+            "유의한 상호작용 효과는 한 요인의 효과가 다른 요인의 수준에 따라 달라질 수 있음을 뜻합니다."
+        )
+
+    interaction_name = f"{factor_a} * {factor_b}"
+    interaction_rows = analysis_rows[analysis_rows[source_col].astype(str) == interaction_name]
+    if not interaction_rows.empty:
+        interaction = interaction_rows.iloc[0]
+        if interaction[pcol] < alpha:
+            lines.append(
+                "상호작용 효과가 유의하므로 단순히 한 요인만 따로 해석하기보다, "
+                "두 요인의 조합별 평균과 사후검정을 함께 확인하는 것이 좋습니다."
+            )
+        else:
+            lines.append(
+                "상호작용 효과는 유의하지 않으므로, 두 요인의 조합보다는 각각의 주효과를 중심으로 해석할 수 있습니다."
+            )
+
+    lines.append(
+        "단, 분산분석은 평균 차이의 통계적 근거를 보여주는 방법이며, 원인과 결과를 단정하지는 않습니다."
+    )
+    return "\n\n".join(lines)
+
+
+def multi_correlation_for_app(data, columns=None, alpha=0.05):
+    """여러 숫자형 변수 쌍의 상관분석을 Streamlit 화면용 표와 행렬로 반환합니다."""
+    if columns is None:
+        columns = data.select_dtypes(include="number").columns.tolist()
+    if isinstance(columns, str):
+        columns = [columns]
+    columns = list(columns)
+
+    if len(columns) < 2:
+        raise ValueError("다중 상관분석을 위해서는 숫자형 컬럼이 2개 이상 필요합니다.")
+
+    rows = []
+    for i, col1 in enumerate(columns):
+        for col2 in columns[i + 1:]:
+            pair = data[[col1, col2]].dropna()
+            if len(pair) < 3:
+                rows.append({
+                    "변수1": col1,
+                    "변수2": col2,
+                    "method": "검정 불가",
+                    "coef": np.nan,
+                    "p-value": np.nan,
+                    "strength": "-",
+                    "significant": False,
+                    "note": "공통 표본 수가 3개 미만입니다.",
+                })
+                continue
+
+            try:
+                result = correlation(data, col1, col2, alpha=alpha, plot=False).reset_index()
+                row = result.iloc[0].to_dict()
+                rows.append({
+                    "변수1": col1,
+                    "변수2": col2,
+                    "method": row.get("method"),
+                    "coef": row.get("coef"),
+                    "p-value": row.get("p-value"),
+                    "strength": row.get("strength"),
+                    "significant": bool(row.get("significant")),
+                    "note": "",
+                })
+            except Exception as error:
+                rows.append({
+                    "변수1": col1,
+                    "변수2": col2,
+                    "method": "검정 불가",
+                    "coef": np.nan,
+                    "p-value": np.nan,
+                    "strength": "-",
+                    "significant": False,
+                    "note": str(error),
+                })
+
+    result_table = DataFrame(rows)
+    result_table["abs_coef"] = pd.to_numeric(result_table["coef"], errors="coerce").abs()
+    result_table = result_table.sort_values("abs_coef", ascending=False).drop(columns=["abs_coef"])
+    corr_matrix = data[columns].corr()
+    return result_table.reset_index(drop=True), corr_matrix
+
+
+def make_multi_correlation_interpretation(result_table, alpha=0.05, top_n=3):
+    """다중 상관분석 결과를 보고서용 문장으로 요약합니다."""
+    if result_table is None or result_table.empty:
+        return "다중 상관분석 결과가 없어 해석 문장을 생성할 수 없습니다."
+
+    table = result_table.copy()
+    table["coef"] = pd.to_numeric(table["coef"], errors="coerce")
+    table["p-value"] = pd.to_numeric(table["p-value"], errors="coerce")
+    valid = table.dropna(subset=["coef", "p-value"])
+
+    if valid.empty:
+        return "계산 가능한 상관계수 쌍이 없어 해석할 수 없습니다."
+
+    significant = valid[valid["p-value"] < alpha].copy()
+    lines = [
+        f"총 {len(valid)}개 변수쌍의 상관관계를 확인했습니다. "
+        "각 변수쌍은 데이터 조건에 따라 Pearson 또는 Spearman 상관계수로 계산했습니다."
+    ]
+
+    if significant.empty:
+        lines.append(
+            f"유의수준 {alpha} 기준에서 통계적으로 유의한 상관관계는 확인되지 않았습니다. "
+            "현재 데이터에서는 숫자형 변수들이 뚜렷하게 함께 움직인다고 보기 어렵습니다."
+        )
+    else:
+        significant["abs_coef"] = significant["coef"].abs()
+        top = significant.sort_values("abs_coef", ascending=False).head(top_n)
+        parts = []
+        for _, row in top.iterrows():
+            direction = "양의" if row["coef"] > 0 else "음의"
+            parts.append(
+                f"`{row['변수1']}`-`{row['변수2']}`: r={row['coef']:.3f}, "
+                f"{direction} 상관, p={format_p_value(row['p-value'])}"
+            )
+        lines.append(
+            f"유의수준 {alpha} 기준에서 유의한 상관관계는 {len(significant)}개입니다. "
+            "가장 주목할 변수쌍은 " + " / ".join(parts) + "입니다."
+        )
+
+    lines.append(
+        "상관관계는 두 변수가 함께 움직이는 정도를 보여주지만, 원인과 결과를 의미하지는 않습니다. "
+        "강한 상관이 보이는 변수는 추가 분석이나 회귀분석 후보로 검토할 수 있습니다."
+    )
+    return "\n\n".join(lines)
+
+
+def compute_vif(data, columns=None):
+    """숫자형 설명변수의 VIF(분산팽창계수)를 계산합니다."""
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    import statsmodels.api as sm
+
+    if columns is None:
+        target = data.select_dtypes(include="number").copy()
+    else:
+        missing = [column for column in columns if column not in data.columns]
+        if missing:
+            raise KeyError(f"데이터에 없는 컬럼입니다: {missing}")
+        target = data[list(columns)].copy()
+
+    target = target.apply(pd.to_numeric, errors="coerce")
+    target = target.replace([np.inf, -np.inf], np.nan).dropna()
+    target = target.loc[:, target.nunique(dropna=True) > 1]
+
+    if target.shape[0] < 2 or target.shape[1] < 2:
+        return DataFrame(columns=["변수", "VIF", "판정"])
+
+    X = sm.add_constant(target)
+    rows = []
+    for index, column in enumerate(X.columns):
+        if column == "const":
+            continue
+        try:
+            vif_value = float(variance_inflation_factor(X.values, index))
+        except Exception:
+            vif_value = np.inf
+
+        if vif_value >= 10:
+            verdict = "높음"
+        elif vif_value >= 5:
+            verdict = "주의"
+        else:
+            verdict = "양호"
+
+        rows.append({
+            "변수": column,
+            "VIF": vif_value,
+            "판정": verdict,
+        })
+
+    return DataFrame(rows).sort_values("VIF", ascending=False).reset_index(drop=True)
+
+
+def compute_regression_vif(data, x_columns):
+    """회귀분석 설명변수를 더미변수까지 반영해 VIF 표로 반환합니다."""
+    x_columns = list(x_columns)
+    df = data[x_columns].dropna().copy()
+    X = pd.get_dummies(df, drop_first=True).astype(float)
+    return compute_vif(X)
+
+
+def make_vif_interpretation(vif_table, threshold=10.0):
+    """VIF 진단 결과를 보고서용 문장으로 정리합니다."""
+    if vif_table is None or vif_table.empty:
+        return (
+            "VIF는 설명변수가 2개 이상일 때 다중공선성을 점검하는 지표입니다. "
+            "현재 선택한 설명변수만으로는 VIF를 계산할 수 없거나, 계산 가능한 변수가 2개 미만입니다."
+        )
+
+    table = vif_table.copy()
+    table["VIF"] = pd.to_numeric(table["VIF"], errors="coerce")
+    max_row = table.loc[table["VIF"].idxmax()]
+    max_vif = max_row["VIF"]
+    max_var = max_row["변수"]
+    max_vif_text = "∞" if np.isinf(max_vif) else f"{max_vif:.2f}"
+
+    if np.isinf(max_vif) or max_vif >= threshold:
+        risky = table[table["VIF"] >= threshold]["변수"].astype(str).tolist()
+        return (
+            f"VIF 진단 결과, 가장 높은 값은 `{max_var}`의 VIF={max_vif_text}입니다. "
+            f"일반적으로 VIF가 {threshold:g} 이상이면 설명변수 간 중복 정보가 커서 "
+            "회귀계수 해석이 불안정할 수 있습니다. "
+            f"우선 점검할 변수는 {', '.join(f'`{name}`' for name in risky)}입니다."
+        )
+
+    if max_vif >= 5:
+        return (
+            f"VIF 진단 결과, 최대 VIF는 `{max_var}`의 {max_vif_text}입니다. "
+            "심각한 다중공선성 기준에는 미치지 않지만 일부 설명변수 간 관련성이 있을 수 있으므로 "
+            "계수 해석 시 주의하는 것이 좋습니다."
+        )
+
+    return (
+        f"VIF 진단 결과, 최대 VIF는 `{max_var}`의 {max_vif_text}입니다. "
+        "선택한 설명변수들 사이에 심각한 다중공선성은 보이지 않아 회귀계수 해석의 안정성이 비교적 양호합니다."
+    )
+
+
 # ============================================================
 # 회귀분석 (선형회귀, OLS)
 # ============================================================

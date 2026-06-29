@@ -153,16 +153,27 @@ if st.button("시계열 분석 실행"):
         st.dataframe(ts_df, use_container_width=True, hide_index=True)
 
     # --- 추세 해석 ---
+    st.subheader("분석 근거")
+    rationale = my_data.timeseries_analysis_rationale(
+        date_column=date_column,
+        value_column=value_column,
+        period=period,
+        agg=agg,
+        ma_window=int(ma_window),
+    )
+    st.info(rationale)
+
     st.subheader("추세 해석")
     insight = my_data.timeseries_trend_insight(ts_df, date_column, value_column)
     st.info(insight)
+    report_text = f"[분석 근거]\n{rationale}\n\n[추세 해석]\n{insight}"
 
     # 보고서 담기용 저장
     st.session_state["timeseries_candidate"] = {
         "title": f"시계열 분석 - {value_column} ({period} {agg})",
         "fig": fig,
         "table": ts_df,
-        "text": insight,
+        "text": report_text,
     }
 
 

@@ -915,6 +915,84 @@ def _format_insight_value(value):
         return str(value)
 
 
+def group_analysis_rationale(group_columns, value_column, agg_label, chart_type):
+    """그룹 집계를 왜 수행하는지 설명하는 범용 분석 근거 문장을 만듭니다."""
+    groups = ", ".join(f"`{column}`" for column in group_columns)
+
+    if len(group_columns) == 1:
+        group_reason = (
+            f"{groups}은 데이터를 여러 그룹으로 나누는 기준 변수입니다. "
+            "그룹별 차이와 집중도를 확인하기 위해 사용했습니다."
+        )
+    else:
+        group_reason = (
+            f"{groups}은 두 기준을 함께 비교하기 위한 변수입니다. "
+            "단일 기준으로는 보이지 않는 조합별 차이를 확인하기 위해 사용했습니다."
+        )
+
+    if agg_label == "개수":
+        value_reason = (
+            "`개수`는 각 그룹에 데이터가 얼마나 많이 분포하는지 보여주는 기본 지표입니다. "
+            "그룹별 규모와 데이터 집중도를 비교하기 위해 사용했습니다."
+        )
+    elif agg_label == "합계":
+        value_reason = (
+            f"`{value_column}`의 합계는 그룹별 전체 규모나 기여도를 비교하기 위한 지표입니다."
+        )
+    elif agg_label == "평균":
+        value_reason = (
+            f"`{value_column}`의 평균은 그룹별 일반적인 수준을 비교하기 위한 지표입니다. "
+            "다만 그룹별 표본 수가 다르면 평균이 왜곡될 수 있어 개수도 함께 확인하는 것이 좋습니다."
+        )
+    elif agg_label == "중앙값":
+        value_reason = (
+            f"`{value_column}`의 중앙값은 극단값의 영향을 줄이고 대표적인 수준을 보기 위한 지표입니다."
+        )
+    else:
+        value_reason = (
+            f"`{value_column}`의 {agg_label}은 그룹별 값의 경계와 범위를 확인하기 위한 지표입니다."
+        )
+
+    if chart_type == "bar":
+        chart_reason = "막대그래프는 범주별 값의 크기 차이를 직관적으로 비교하기에 적합해서 사용했습니다."
+    elif chart_type == "heatmap":
+        chart_reason = "히트맵은 두 범주 조합에서 값이 집중되는 구간을 색으로 빠르게 찾기 위해 사용했습니다."
+    else:
+        chart_reason = "선택한 그래프는 집계 결과를 비교하기 쉽게 보여주기 위해 사용했습니다."
+
+    caution = (
+        "이 분석은 그룹 간 차이를 탐색하는 단계이므로, 차이가 곧 원인이라는 뜻은 아닙니다. "
+        "필요하면 통계 분석 페이지에서 유의성 검정을 함께 확인하는 것이 좋습니다."
+    )
+
+    return "\n\n".join([group_reason, value_reason, chart_reason, caution])
+
+
+def timeseries_analysis_rationale(date_column, value_column, period, agg, ma_window):
+    """시계열 분석을 왜 수행하는지 설명하는 범용 분석 근거 문장을 만듭니다."""
+    value_reason = (
+        f"`{date_column}`은 시간 순서를 나타내는 변수이므로 변화 흐름을 보기 위해 사용했습니다. "
+        f"`{value_column}`은 시간에 따라 비교할 수 있는 숫자형 지표라서 분석 대상으로 선택했습니다."
+    )
+
+    agg_reason = (
+        f"{period} 단위로 `{agg}` 집계를 적용해 너무 세부적인 변동을 줄이고, "
+        "기간별 흐름을 비교할 수 있게 했습니다."
+    )
+
+    chart_reason = (
+        "선그래프는 시간 순서에 따른 증가, 감소, 반복 패턴을 확인하기에 적합해서 사용했습니다. "
+        f"{ma_window}개 구간 이동평균은 단기 변동을 부드럽게 만들어 전반적인 추세를 보기 위한 보조선입니다."
+    )
+
+    caution = (
+        "시계열 추세는 과거 데이터의 흐름을 요약한 것이며, 미래에도 같은 흐름이 이어진다는 보장은 없습니다. "
+        "예측이나 원인 해석에는 외부 요인과 추가 검증이 필요합니다."
+    )
+
+    return "\n\n".join([value_reason, agg_reason, chart_reason, caution])
+
+
 def group_aggregation_insight(result, group_column, value_column, agg_label):
     """단일 그룹 집계 결과를 보고서용 해석 문장으로 바꿉니다."""
     if result is None or result.empty:

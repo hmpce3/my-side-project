@@ -110,6 +110,7 @@ st.subheader("집계 결과")
 report_table = None
 report_fig = None
 report_insight = ""
+report_rationale = ""
 
 # --- 그룹 컬럼이 1개: groupby 표 + 막대그래프 ---
 if len(group_columns) == 1:
@@ -155,12 +156,20 @@ if len(group_columns) == 1:
 
     # 보고서에 바로 넣을 수 있는 분석 해석
     if not result.empty:
+        report_rationale = my_data.group_analysis_rationale(
+            group_columns=[group],
+            value_column=value_name,
+            agg_label=agg_label,
+            chart_type="bar",
+        )
         report_insight = my_data.group_aggregation_insight(
             result,
             group_column=group,
             value_column=value_name,
             agg_label=agg_label,
         )
+        with st.expander("분석 근거: 왜 이 변수와 그래프를 사용했나요?", expanded=True):
+            st.info(report_rationale)
         st.info(report_insight)
 
 # --- 그룹 컬럼이 2개: 피벗표 + 히트맵 ---
@@ -203,6 +212,14 @@ else:
         column_column=g2,
         value_name=value_name,
     )
+    report_rationale = my_data.group_analysis_rationale(
+        group_columns=[g1, g2],
+        value_column=value_name,
+        agg_label=agg_label,
+        chart_type="heatmap",
+    )
+    with st.expander("분석 근거: 왜 이 변수와 그래프를 사용했나요?", expanded=True):
+        st.info(report_rationale)
     st.info(report_insight)
 
 
@@ -225,6 +242,11 @@ with download_col:
 
 with report_col:
     report_title = " × ".join(group_columns) + f" · {value_name}"
+    report_caption = (
+        f"[분석 근거]\n{report_rationale}\n\n[결과 해석]\n{report_insight}"
+        if report_rationale
+        else report_insight
+    )
 
     if report_table is not None:
         my_report.report_button(
@@ -233,7 +255,7 @@ with report_col:
             "그룹별 집계",
             report_table,
             key="add_group_table",
-            caption=report_insight,
+            caption=report_caption,
             label="📌 표 리포트에 담기",
         )
 
@@ -244,6 +266,6 @@ with report_col:
             "그룹별 집계",
             report_fig,
             key="add_group_chart",
-            caption=report_insight,
+            caption=report_caption,
             label="📌 그래프 리포트에 담기",
         )

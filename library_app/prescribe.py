@@ -14,6 +14,9 @@ import pandas as pd
 
 from diagnosis import GAP_THRESHOLD_PP
 
+# 제적 후보의 '발행년도' 유효 상한(데이터 기준연도). 미래·깨진 값을 걸러낼 때 씁니다.
+YEAR_MAX = 2026
+
 
 def _normalize_isbn(series):
     """ISBN을 비교 가능한 문자열로 통일합니다(소수점·공백 제거)."""
@@ -80,11 +83,23 @@ def recommend_duplicates(prepared, top_n=10):
 
 
 def weeding_candidates(prepared, top_n=10):
-    """정리 후보: 등록된 지 오래됐는데 대출이 0인 도서 → 큐레이션/제적 검토."""
+    """정리 후보: 등록된 지 오래됐는데 대출이 0인 도서 → 큐레이션/제적 검토.
+
+    발행년도는 '4자리 유효 연도'만 인정한다. 원자료(정보나루 장서목록)에는 9·153·214
+    같은 깨진 값이 섞여 있어, 그대로 오름차순 정렬하면 엉뚱한 책이 '가장 오래된 책'으로
+    올라온다. 도서관 장서로 납득 가능한 범위(1400~올해) 밖은 결측 처리해 제외한다.
+    """
     df = prepared.copy()
     df["대출건수"] = pd.to_numeric(df["대출건수"], errors="coerce").fillna(0)
     year = pd.to_numeric(df.get("발행년도"), errors="coerce")
+    year = year.where(year.between(1400, YEAR_MAX))  # 깨진 발행년도(9·153 등) 제거
     never_borrowed = df[(df["대출건수"] == 0)].copy()
     never_borrowed["발행년도"] = year
     cols = [c for c in ["도서명", "분야", "독자대상", "발행년도", "대출건수"] if c in never_borrowed.columns]
-    return never_borrowed.sort_values("발행년도", na_position="last")[cols].head(top_n).reset_index(drop=True)
+    # 유효 연도만 남기면 '깨진 값'이 아니라 '진짜 오래된 책'이 제적 후보로 올라온다.
+    return (
+        never_borrowed.dropna(subset=["발행년도"])
+        .sort_values("발행년도")[cols]
+        .head(top_n)
+        .reset_index(drop=True)
+    )

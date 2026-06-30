@@ -68,9 +68,10 @@ def show_analysis_basis(title, question, rationale, criteria, caution=None):
 
 
 # 샘플(실제) 데이터는 매번 다시 읽으면 느리므로 한 번만 읽어 캐시합니다.
+# path를 캐시 키로 받으므로, 도서관을 바꾸면 그 파일이 새로 캐시됩니다.
 @st.cache_data(show_spinner="샘플 데이터를 불러오는 중...")
-def load_sample_collection():
-    return loader.load_sample_collection()
+def load_sample_collection(path=None):
+    return loader.load_sample_collection(path)
 
 
 @st.cache_data(show_spinner=False)
@@ -127,13 +128,13 @@ def get_context():
         st.divider()
 
         st.subheader("데이터")
-        source = st.radio(
+        mode = st.radio(
             "분석할 데이터",
-            ["샘플 데이터 둘러보기 (2.28도서관)", "내 도서관 파일 올리기"],
+            ["사전 적재 도서관 선택", "내 도서관 파일 올리기"],
             label_visibility="collapsed",
         )
 
-        if source == "내 도서관 파일 올리기":
+        if mode == "내 도서관 파일 올리기":
             files = st.file_uploader(
                 "도서관 데이터 파일 (여러 개를 한 번에 올릴 수 있어요)",
                 type=["csv", "xlsx", "xls", "json"],
@@ -153,14 +154,29 @@ def get_context():
                     st.caption(f"• {name} → **{label}**")
             return ctx, False
 
-        st.info("**실제 2.28도서관 데이터**로 둘러봅니다. (도서관정보나루, 출처표시 BY)")
+        # 선택형: 도서관을 바꾸면 같은 엔진이 다른 진단을 낸다 (범용성 증명의 핵심 데모)
+        libraries = loader.list_sample_libraries()
+        if not libraries:
+            st.error("data/ 폴더에서 장서 대출목록 파일을 찾지 못했습니다.")
+            st.stop()
+        library = st.selectbox("도서관 선택", list(libraries.keys()))
+        st.info(f"**{library} 실제 데이터**로 진단합니다. (도서관정보나루, 출처표시 BY)")
+
         try:
-            return {
-                "collection": load_sample_collection(),
-                "monthly": load_sample_monthly(),
+            ctx = {
+                "collection": load_sample_collection(libraries[library]),
+                # 인기대출·급상승은 '전국' 벤치마크라 어느 도서관을 보든 공통으로 붙입니다.
                 "popular": load_sample_popular(),
                 "surge": load_sample_surge(),
-            }, True
+                "library": library,
+            }
+            # 월별 추세(테마요청) 데이터는 출처 도서관이 확정된 경우에만 붙입니다.
+            # data/에 검증된 월별 파일이 없으면 추세 화면은 자동 비활성화됩니다.
+            try:
+                ctx["monthly"] = load_sample_monthly()
+            except FileNotFoundError:
+                pass
+            return ctx, True
         except Exception as error:
             st.error(f"샘플 데이터를 불러오지 못했습니다: {error}")
             st.stop()
@@ -193,9 +209,10 @@ if section == "개요 · 핵심 지표":
     st.title("도서관 데이터 분석 대시보드")
 
     if is_demo:
+        library_name = ctx.get("library", "샘플 도서관")
         st.info(
-            "지금은 **2.28도서관 실제 데이터(샘플)**입니다. 내 도서관을 분석하려면 "
-            "왼쪽 사이드바에서 '내 도서관 파일 올리기'를 선택하세요.",
+            f"지금은 **{library_name} 실제 데이터(샘플)**입니다. 다른 도서관은 사이드바에서 "
+            "선택하거나, '내 도서관 파일 올리기'로 직접 올릴 수 있어요.",
             icon="📊",
         )
 

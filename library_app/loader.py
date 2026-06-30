@@ -112,20 +112,39 @@ def smart_read(uploaded_file):
     return data
 
 
-def load_sample_collection():
+def list_sample_libraries():
     """
-    data/ 폴더의 '실제' 장서 대출목록(2.28도서관)을 읽어 돌려줍니다.
+    data/ 폴더의 '장서 대출목록' 파일들을 {표시이름: 경로}로 돌려줍니다.
 
-    업로드 없이도 진짜 데이터로 대시보드를 둘러볼 수 있게 하는 기본 샘플입니다.
+    선택형 대시보드의 핵심: 도서관을 바꿔 끼우면 같은 엔진이 다른 진단을 낸다.
+    파일명 '2.28도서관 장서 대출목록 (2026년 05월).csv' → 표시이름 '2.28도서관'.
+    """
+    paths = sorted(glob.glob(os.path.join(DATA_DIR, "*장서 대출목록*.csv")))
+    libraries = {}
+    for path in paths:
+        name = os.path.basename(path)
+        label = name.split("장서 대출목록")[0].strip() or name
+        libraries[label] = path
+    return libraries
+
+
+def load_sample_collection(path=None):
+    """
+    data/ 폴더의 '실제' 장서 대출목록을 읽어 돌려줍니다.
+
+    path가 없으면 첫 번째 장서 파일을 읽습니다(기존 동작 유지).
+    선택형 화면에서는 list_sample_libraries()가 준 경로를 그대로 넘깁니다.
     (도서관정보나루 데이터는 출처표시(BY) 라이선스라 동봉·사용 가능)
     """
-    path = _find_data_file("*장서 대출목록*.csv", "*장서*.csv")
+    if path is None:
+        path = _find_data_file("*장서 대출목록*.csv", "*장서*.csv")
     if path is None:
         raise FileNotFoundError(
             "data/ 폴더에서 장서 대출목록 CSV를 찾지 못했습니다. "
             "파일을 넣거나 '내 도서관 파일 올리기'를 사용하세요."
         )
-    return pd.read_csv(path, encoding="utf-8-sig")
+    # ISBN·부가기호·권은 섞인 타입이 있어 문자열 손실을 막으려 low_memory=False.
+    return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
 
 
 # ------------------------------------------------------------

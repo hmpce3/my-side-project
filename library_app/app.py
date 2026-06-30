@@ -90,6 +90,12 @@ def load_sample_surge():
     return loader.load_sample_surge()
 
 
+# 전국 도서관 마스터(위경도·코드) — 지도/확장성 화면의 기반. API 없이 로컬 파일로 동작.
+@st.cache_data(show_spinner=False)
+def load_library_master():
+    return loader.load_library_master()
+
+
 # ============================================================
 # 데이터 준비 — 여러 파일을 한꺼번에 올리면 종류를 자동 판별해 알맞은 칸에 채웁니다.
 # context(ctx) = {"collection":…, "monthly":…, "popular":…, "libraries":… }
@@ -196,6 +202,7 @@ with st.sidebar:
             "장서 진단 · 의사결정",
             "대출 추세 진단",
             "📑 진단 보고서",
+            "🗺️ 전국 도서관 (확장성)",
         ],
     )
     st.divider()
@@ -591,3 +598,62 @@ elif section == "📑 진단 보고서":
     if st.button("담은 항목 모두 비우기"):
         my_report.clear_items()
         st.rerun()
+
+
+# ============================================================
+# 섹션 5) 전국 도서관 (확장성) — 같은 엔진이 어디까지 확장되나
+# API 없이 로컬 참여도서관목록(위경도·코드)만으로 '전국 확장' 그림을 보여줍니다.
+# ============================================================
+elif section == "🗺️ 전국 도서관 (확장성)":
+    st.title("전국 도서관 — 이 엔진은 어디까지 확장되나")
+    st.caption(
+        "특정 두 도서관 비교가 목적이 아니라, 어떤 공공도서관이든 같은 진단 엔진으로 "
+        "분석하는 것이 목표입니다. 아래는 도서관정보나루 참여 도서관 전체입니다."
+    )
+
+    try:
+        master = load_library_master()
+    except FileNotFoundError:
+        st.warning("참여도서관목록 파일이 없어 지도를 표시할 수 없습니다.", icon="📂")
+        st.stop()
+
+    # 현재 '정밀 분석'(책별 장서·대출 CSV)이 가능한 도서관 표시
+    analyzable = set(loader.list_sample_libraries().keys())
+    master["분석상태"] = master["도서관명"].apply(
+        lambda name: "정밀 분석 보유" if name in analyzable else "목록·코드 보유"
+    )
+
+    c1, c2 = st.columns(2)
+    c1.metric("전국 참여 도서관", f"{len(master):,}관")
+    c2.metric("현재 정밀 분석 보유", f"{(master['분석상태'] == '정밀 분석 보유').sum()}관")
+
+    fig = px.scatter_map(
+        master,
+        lat="위도", lon="경도",
+        color="분석상태",
+        hover_name="도서관명",
+        hover_data={"도서관코드": True, "위도": False, "경도": False},
+        color_discrete_map={"정밀 분석 보유": "#E45756", "목록·코드 보유": "#9AA0A6"},
+        zoom=5.5, height=560,
+    )
+    fig.update_layout(
+        map_style="open-street-map",
+        margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown(
+        """
+        지도의 **빨간 점**은 지금 *정밀 진단*(책별 장서·대출 데이터 보유)이 되는 도서관입니다.
+        나머지 도서관도 **도서관코드·위치는 이미 확보**돼 있어, 두 갈래로 확장됩니다.
+
+        | 모드 | 입력 | 분석 깊이 |
+        |---|---|---|
+        | **간편 진단** | 도서관 선택 → API(장서·인기대출) | 장서 구성·수요 트렌드 기반 부족/과잉 |
+        | **정밀 진단** | 장서 대출목록 CSV 업로드 | 책별 대출건수 기반 수급격차·미대출 예측 |
+
+        > 간편 진단의 깊이는 **API(itemSrch) 응답에 *대출건수*가 포함되는지**에 따라
+        > 정해집니다. (현재 인증키 승인 대기 중 — 확정되면 이 화면의 회색 점들도 분석 대상에 들어옵니다.)
+        """
+    )

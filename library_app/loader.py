@@ -148,6 +148,34 @@ def load_sample_collection(path=None):
 
 
 # ------------------------------------------------------------
+# 전국 도서관 마스터 (참여도서관목록) — 선택형/지도 인프라의 기반
+# ------------------------------------------------------------
+def load_library_master():
+    """
+    data/ 폴더의 '참여도서관목록'을 읽어 전국 도서관 마스터로 돌려줍니다.
+
+    위경도·도서관코드를 담고 있어 지도 표시와 API 연동(libCode)의 기반이 됩니다.
+    파일 상단에 메타 줄이 붙어 있어 '도서관명' 헤더 행을 찾아 그 아래만 읽습니다.
+    """
+    path = _find_data_file("*참여도서관목록*.xlsx", "*참여도서관*.xlsx", "*도서관목록*.xlsx")
+    if path is None:
+        raise FileNotFoundError("data/ 폴더에서 참여도서관목록 파일을 찾지 못했습니다.")
+
+    probe = pd.read_excel(path, header=None, dtype=str)
+    header_row = 0
+    for i in range(min(20, len(probe))):
+        if any(str(x).strip() == "도서관명" for x in probe.iloc[i].tolist()):
+            header_row = i
+            break
+
+    df = pd.read_excel(path, header=header_row, dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+    df["위도"] = pd.to_numeric(df.get("위도"), errors="coerce")
+    df["경도"] = pd.to_numeric(df.get("경도"), errors="coerce")
+    return df.dropna(subset=["위도", "경도"]).reset_index(drop=True)
+
+
+# ------------------------------------------------------------
 # 월별 대출 추세용 데이터 (도서관정보나루 '테마요청' 형식)
 # ------------------------------------------------------------
 def _parse_korean_month(value):

@@ -61,7 +61,7 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run generic_dashboard/app.py
 ```
 
 Windows에서는 `실행.bat` 파일을 실행해 로컬 환경에서 앱을 열 수 있습니다.
@@ -143,7 +143,7 @@ https://my-side-project-9qsbh9hfdsf7a7dgpdzrks.streamlit.app/
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run generic_dashboard/app.py
 ```
 
 On Windows, you can also run the app by opening `실행.bat`.
@@ -159,3 +159,23 @@ The app is designed to help answer questions such as:
 - How do values differ across groups?
 - Are there statistically significant differences or relationships?
 - How can the analysis results be organized into a report?
+# Side Project Dashboards
+
+이 저장소는 이제 두 앱을 폴더로 구분합니다.
+
+- `generic_dashboard/`: CSV, Excel, JSON 파일을 올려서 쓰는 범용 데이터 분석 대시보드
+- `library_app/`: 도서관 데이터 공모전용 장서 수급 진단 대시보드
+
+## 실행
+
+```bash
+# 범용 데이터 분석 대시보드
+streamlit run generic_dashboard/app.py
+
+# 도서관 공모전용 대시보드
+streamlit run library_app/app.py
+```
+
+Windows에서는 `실행.bat`가 범용 대시보드를, `실행_도서관.bat`가 도서관 공모전용 대시보드를 실행합니다.
+
+---

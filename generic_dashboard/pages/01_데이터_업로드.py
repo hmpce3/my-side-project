@@ -330,6 +330,7 @@ if uploaded_files:
             "직접 시각화",
             "그룹별 집계",
             "통계 분석",
+            "시계열 분석",
             "보고서",
         }
         if not recommendation_table.empty and "추천 페이지" in recommendation_table.columns:

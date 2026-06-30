@@ -1,9 +1,9 @@
 """
 도서관 공공데이터 분석 대시보드 (공모전용 · 도메인 특화 앱)
 
-이 앱은 범용 분석 도구(상위 폴더 app.py)와 '별개의 앱'이지만,
-분석 엔진(상위 폴더 helpers/)은 그대로 공유합니다.
-  - 공용 엔진(helpers)  : 시계열·통계·시각화·보고서 등 도메인 무관 기능
+이 앱은 범용 분석 도구(generic_dashboard/app.py)와 '별개의 앱'이지만,
+분석 엔진(generic_dashboard/helpers/)은 그대로 공유합니다.
+  - 공용 엔진(generic_dashboard/helpers) : 시계열·통계·시각화·보고서 등 도메인 무관 기능
   - 이 앱(library_app)  : 도서관 도메인 지식(KPI·문제정의·제언)만 담당
 
 실행: 프로젝트 루트의 '실행_도서관.bat' (또는
@@ -14,12 +14,15 @@ import os
 import sys
 
 # ------------------------------------------------------------
-# 공용 엔진(helpers)을 import할 수 있도록 프로젝트 루트를 경로에 추가합니다.
-# 이렇게 하면 복제본 없이 상위 폴더의 helpers/를 그대로 재사용합니다.
+# 공용 엔진(helpers)을 import할 수 있도록 범용 대시보드 폴더를 경로에 추가합니다.
+# 이렇게 하면 복제본 없이 generic_dashboard/helpers/를 그대로 재사용합니다.
 # ------------------------------------------------------------
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GENERIC_DASHBOARD_DIR = os.path.join(ROOT_DIR, "generic_dashboard")
+if GENERIC_DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, GENERIC_DASHBOARD_DIR)
 if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+    sys.path.insert(1, ROOT_DIR)
 
 import pandas as pd
 import plotly.express as px

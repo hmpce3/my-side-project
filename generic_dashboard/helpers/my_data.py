@@ -556,9 +556,9 @@ def recommend_analysis_flow(data):
 
     if date_candidates and numeric_columns:
         add(
-            "날짜 기준 집계 검토",
-            f"날짜 후보({', '.join(map(str, date_candidates[:3]))})가 있어 월별·일별처럼 기간 기준으로 묶어 비교할 수 있습니다.",
-            "그룹별 집계",
+            "시간 흐름 분석",
+            f"날짜 후보({', '.join(map(str, date_candidates[:3]))})와 숫자형 변수 {len(numeric_columns)}개가 있어 기간별 추세와 이동평균을 확인할 수 있습니다.",
+            "시계열 분석",
         )
 
     if categorical_columns and numeric_columns:

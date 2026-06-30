@@ -14,8 +14,14 @@ import glob
 import io
 import os
 import re
+import sys
 
 import pandas as pd
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GENERIC_DASHBOARD_DIR = os.path.join(ROOT_DIR, "generic_dashboard")
+if GENERIC_DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, GENERIC_DASHBOARD_DIR)
 
 from helpers import my_data
 

@@ -192,12 +192,328 @@ ctx, is_demo = get_context()
 data = ctx.get("collection")  # 개요·장서진단이 쓰는 기본 장서 데이터
 
 
+def _first_positive_segments(table, label, limit=3):
+    """수요가 공급보다 큰 세그먼트를 짧은 표시용 문자열로 돌려줍니다."""
+    if table is None or table.empty or "격차" not in table.columns:
+        return []
+    picked = table[table["격차"] > 0].sort_values("격차", ascending=False).head(limit)
+    return [str(v) for v in picked[label].tolist()]
+
+
+def _first_negative_segments(table, label, limit=3):
+    """공급이 수요보다 큰 세그먼트를 짧은 표시용 문자열로 돌려줍니다."""
+    if table is None or table.empty or "격차" not in table.columns:
+        return []
+    picked = table[table["격차"] < 0].sort_values("격차", ascending=True).head(limit)
+    return [str(v) for v in picked[label].tolist()]
+
+
+def _join_or_dash(values):
+    return ", ".join(values) if values else "뚜렷한 후보 없음"
+
+
+def _report_html(library_name, total_supply, total_demand, turnover, result, acquisitions, duplicates, weeding):
+    """클릭 한 번으로 내려받는 간단 진단 보고서 HTML."""
+    field_table = result["분야"]["table"].to_html(index=False)
+    target_table = result["독자대상"]["table"].to_html(index=False)
+    acq_table = acquisitions.to_html(index=False) if isinstance(acquisitions, pd.DataFrame) and not acquisitions.empty else "<p>추천 후보 없음</p>"
+    dup_table = duplicates.to_html(index=False) if isinstance(duplicates, pd.DataFrame) and not duplicates.empty else "<p>추천 후보 없음</p>"
+    weed_table = weeding.to_html(index=False) if isinstance(weeding, pd.DataFrame) and not weeding.empty else "<p>추천 후보 없음</p>"
+    return f"""
+    <!doctype html>
+    <html lang="ko">
+    <head>
+      <meta charset="utf-8">
+      <title>{library_name} 장서 진단 보고서</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; margin: 32px; color: #222; }}
+        h1, h2 {{ margin-top: 28px; }}
+        table {{ border-collapse: collapse; width: 100%; margin: 12px 0 24px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; font-size: 13px; }}
+        th {{ background: #f3f5f7; }}
+        .kpi {{ display: inline-block; margin-right: 20px; padding: 12px 16px; background: #f7f9fb; border-radius: 8px; }}
+      </style>
+    </head>
+    <body>
+      <h1>{library_name} 장서 진단 보고서</h1>
+      <p>도서관 장서 공급과 대출 수요의 차이를 바탕으로 수서·복본·정리 후보를 자동 진단한 결과입니다.</p>
+      <div class="kpi">장서 수: {total_supply:,.0f}권</div>
+      <div class="kpi">대출 건수: {total_demand:,.0f}건</div>
+      <div class="kpi">회전율: {turnover:.2f}회</div>
+      <h2>분야별 수급 격차</h2>
+      {field_table}
+      <h2>독자대상별 수급 격차</h2>
+      {target_table}
+      <h2>수서 후보</h2>
+      {acq_table}
+      <h2>복본 후보</h2>
+      {dup_table}
+      <h2>정리·큐레이션 후보</h2>
+      {weed_table}
+    </body>
+    </html>
+    """
+
+
+def render_mvp_dashboard(ctx, data, is_demo):
+    """
+    클릭 최소화 MVP.
+
+    사용자는 도서관만 고르면 종합 진단이 먼저 보이고,
+    상세는 탭에서 짧게 확인합니다.
+    """
+    library_name = ctx.get("library", "업로드한 도서관")
+    st.title("도서관 장서 운영 진단")
+    st.caption("도서관을 선택하면 장서 공급과 대출 수요를 비교해 수서·복본·정리 후보를 자동으로 정리합니다.")
+
+    if data is None:
+        st.warning(
+            "장서 대출목록 데이터가 필요합니다. 사이드바에서 사전 적재 도서관을 선택하거나 "
+            "`도서권수·대출건수·주제분류번호`가 포함된 파일을 올려주세요.",
+            icon="📂",
+        )
+        st.stop()
+
+    required = ["도서권수", "대출건수", "주제분류번호"]
+    missing = [c for c in required if c not in data.columns]
+    if missing:
+        st.warning(f"자동 진단에 필요한 컬럼이 부족합니다: {', '.join(missing)}", icon="📂")
+        st.stop()
+
+    prepared, result = diagnosis.run_diagnosis(data)
+    total_supply = prepared["도서권수"].sum()
+    total_demand = prepared["대출건수"].sum()
+    turnover = total_demand / total_supply if total_supply else 0
+
+    try:
+        popular = ctx.get("popular")
+        if popular is None:
+            popular = load_sample_popular()
+        acquisitions = prescribe.recommend_acquisitions(prepared, popular, result, top_n=10)
+    except Exception:
+        acquisitions = pd.DataFrame()
+
+    surge = ctx.get("surge")
+    try:
+        rising = prescribe.recommend_rising(prepared, surge, top_n=10) if surge is not None else pd.DataFrame()
+    except Exception:
+        rising = pd.DataFrame()
+
+    duplicates = prescribe.recommend_duplicates(prepared, top_n=10)
+    weeding = prescribe.weeding_candidates(prepared, top_n=10)
+
+    field_table = result["분야"]["table"]
+    target_table = result["독자대상"]["table"]
+    expansion_fields = _first_positive_segments(field_table, "분야")
+    weak_fields = _first_negative_segments(field_table, "분야")
+    expansion_targets = _first_positive_segments(target_table, "독자대상", limit=2)
+
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stMetric"] {
+            background: #f7f9fb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+        .decision-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 14px 16px;
+            min-height: 128px;
+            background: #ffffff;
+        }
+        .decision-card h4 { margin: 0 0 8px 0; font-size: 1rem; }
+        .decision-card strong { font-size: 1.15rem; }
+        .decision-card p { margin: 6px 0 0 0; color: #4b5563; font-size: .92rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    top_left, top_right = st.columns([3, 1])
+    with top_left:
+        st.subheader(f"{library_name} 자동 진단 결과")
+        if is_demo:
+            st.caption("사전 적재된 실제 도서관정보나루 장서 대출목록으로 계산했습니다.")
+        else:
+            loaded = [name for name in ("collection", "monthly", "popular", "libraries") if ctx.get(name) is not None]
+            if loaded:
+                st.caption("인식된 데이터: " + ", ".join(detect.FAMILY_LABELS[name] for name in loaded))
+    with top_right:
+        html = _report_html(library_name, total_supply, total_demand, turnover, result, acquisitions, duplicates, weeding)
+        st.download_button(
+            "보고서 다운로드",
+            data=html,
+            file_name=f"{library_name}_장서_진단_보고서.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric("장서 수", f"{total_supply:,.0f}권")
+    kpi_cols[1].metric("대출 건수", f"{total_demand:,.0f}건")
+    kpi_cols[2].metric("전체 회전율", f"{turnover:.2f}회")
+    kpi_cols[3].metric("미대출 후보", f"{len(weeding)}권")
+
+    st.subheader("오늘 우선 볼 장서 운영 이슈")
+    card_cols_1 = st.columns(2)
+    with card_cols_1[0]:
+        st.markdown(
+            f"""
+            <div class="decision-card">
+              <h4>더 사야 할 분야</h4>
+              <strong>{_join_or_dash(expansion_fields)}</strong>
+              <p>수요비중이 장서비중보다 높은 분야입니다.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with card_cols_1[1]:
+        st.markdown(
+            f"""
+            <div class="decision-card">
+              <h4>복본이 필요한 책</h4>
+              <strong>{len(duplicates)}권</strong>
+              <p>대출 회전율이 높은 단일권 도서입니다.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    card_cols_2 = st.columns(2)
+    with card_cols_2[0]:
+        st.markdown(
+            f"""
+            <div class="decision-card">
+              <h4>이용이 낮은 장서</h4>
+              <strong>{len(weeding)}권</strong>
+              <p>대출 0건이면서 발행년도가 유효한 점검 후보입니다.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with card_cols_2[1]:
+        st.markdown(
+            f"""
+            <div class="decision-card">
+              <h4>수급 불균형</h4>
+              <strong>{_join_or_dash(weak_fields)}</strong>
+              <p>장서는 많지만 대출 수요가 낮은 분야입니다.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.subheader("우선 조치 제안")
+    action_cols = st.columns(3)
+    action_cols[0].info(
+        f"**수서 검토**\n\n{_join_or_dash(expansion_fields + expansion_targets)} 쪽은 수요가 장서보다 큽니다."
+    )
+    action_cols[1].success(
+        f"**복본 검토**\n\n회전율이 높은 단일권 도서 {len(duplicates)}권을 먼저 확인하세요."
+    )
+    action_cols[2].warning(
+        f"**정리·큐레이션 검토**\n\n장기 미대출 후보 {len(weeding)}권은 전시·추천 또는 정리 대상입니다."
+    )
+
+    tab_acq, tab_dup, tab_weed, tab_basis, tab_scale = st.tabs(
+        ["더 살 책", "복본", "점검 장서", "분석 근거", "확장성"]
+    )
+
+    with tab_acq:
+        left, right = st.columns([1, 1])
+        with left:
+            st.markdown("#### 부족 분야")
+            st.dataframe(field_table.head(10), use_container_width=True, hide_index=True)
+        with right:
+            st.markdown("#### 수서 후보")
+            if acquisitions.empty:
+                st.info("전국 인기대출 데이터가 없거나 추천 후보가 없습니다.")
+            else:
+                st.dataframe(acquisitions, use_container_width=True, hide_index=True)
+            if not rising.empty:
+                st.markdown("#### 급상승 미소장 후보")
+                st.dataframe(rising, use_container_width=True, hide_index=True)
+
+    with tab_dup:
+        st.markdown("#### 복본 검토 후보")
+        st.caption("대출건수 ÷ 도서권수가 높은데 1권뿐인 도서입니다.")
+        st.dataframe(duplicates, use_container_width=True, hide_index=True)
+
+    with tab_weed:
+        st.markdown("#### 정리·큐레이션 후보")
+        st.caption("대출 0건 도서를 바로 폐기하자는 뜻이 아니라, 노출·전시·제적 검토 대상으로 먼저 추리는 화면입니다.")
+        st.dataframe(weeding, use_container_width=True, hide_index=True)
+
+    with tab_basis:
+        basis_cols = st.columns(2)
+        with basis_cols[0]:
+            st.markdown("#### 분야별 공급·수요 비교")
+            long = field_table.melt(
+                id_vars="분야",
+                value_vars=["공급비중", "수요비중"],
+                var_name="구분",
+                value_name="비중(%)",
+            )
+            fig = px.bar(long, x="분야", y="비중(%)", color="구분", barmode="group")
+            st.plotly_chart(fig, use_container_width=True)
+        with basis_cols[1]:
+            st.markdown("#### 독자대상별 공급·수요 비교")
+            long_target = target_table.melt(
+                id_vars="독자대상",
+                value_vars=["공급비중", "수요비중"],
+                var_name="구분",
+                value_name="비중(%)",
+            )
+            fig_target = px.bar(long_target, x="독자대상", y="비중(%)", color="구분", barmode="group")
+            st.plotly_chart(fig_target, use_container_width=True)
+        with st.expander("수급격차 계산 방식"):
+            st.markdown(
+                """
+                - 공급비중 = 특정 분야의 도서권수 / 전체 도서권수
+                - 수요비중 = 특정 분야의 대출건수 / 전체 대출건수
+                - 수급격차 = 수요비중 - 공급비중
+
+                수급격차가 양수이면 수요 대비 장서가 부족한 후보, 음수이면 장서 대비 이용이 낮은 후보로 봅니다.
+                이 값은 최종 제적·구입 결정을 대신하지 않고, 사서가 먼저 볼 후보를 좁히는 탐색 지표입니다.
+                """
+            )
+
+    with tab_scale:
+        try:
+            master = load_library_master()
+            analyzable = set(loader.list_sample_libraries().keys())
+            master["분석상태"] = master["도서관명"].apply(
+                lambda name: "정밀 분석 보유" if name in analyzable else "목록·코드 보유"
+            )
+            metric_cols = st.columns(2)
+            metric_cols[0].metric("전국 참여 도서관", f"{len(master):,}관")
+            metric_cols[1].metric("현재 정밀 분석 보유", f"{(master['분석상태'] == '정밀 분석 보유').sum()}관")
+            fig_map = px.scatter_map(
+                master,
+                lat="위도",
+                lon="경도",
+                color="분석상태",
+                hover_name="도서관명",
+                hover_data={"도서관코드": True, "위도": False, "경도": False},
+                color_discrete_map={"정밀 분석 보유": "#E45756", "목록·코드 보유": "#9AA0A6"},
+                zoom=5.5,
+                height=460,
+            )
+            fig_map.update_layout(map_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0))
+            st.plotly_chart(fig_map, use_container_width=True)
+        except FileNotFoundError:
+            st.info("참여도서관목록 파일이 없어 확장성 지도를 표시하지 않습니다.")
+
 # 사이드바 메뉴
 with st.sidebar:
     st.divider()
     section = st.radio(
         "메뉴",
         [
+            "자동 진단",
             "개요 · 핵심 지표",
             "장서 진단 · 의사결정",
             "대출 추세 진단",
@@ -210,9 +526,16 @@ with st.sidebar:
 
 
 # ============================================================
+# 섹션 0) 자동 진단
+# ============================================================
+if section == "자동 진단":
+    render_mvp_dashboard(ctx, data, is_demo)
+
+
+# ============================================================
 # 섹션 1) 개요 · 핵심 지표
 # ============================================================
-if section == "개요 · 핵심 지표":
+elif section == "개요 · 핵심 지표":
     st.title("도서관 데이터 분석 대시보드")
 
     if is_demo:

@@ -499,7 +499,7 @@ def render_mvp_dashboard(ctx, data, is_demo):
                 hover_name="도서관명",
                 hover_data={"도서관코드": True, "위도": False, "경도": False},
                 color_discrete_map={"정밀 분석 보유": "#E45756", "목록·코드 보유": "#9AA0A6"},
-                zoom=5.5,
+                zoom=5,
                 height=460,
             )
             fig_map.update_layout(map_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0))
@@ -957,7 +957,7 @@ elif section == "🗺️ 전국 도서관 (확장성)":
         hover_name="도서관명",
         hover_data={"도서관코드": True, "위도": False, "경도": False},
         color_discrete_map={"정밀 분석 보유": "#E45756", "목록·코드 보유": "#9AA0A6"},
-        zoom=5.5, height=560,
+        zoom=5, height=560,
     )
     fig.update_layout(
         map_style="open-street-map",
